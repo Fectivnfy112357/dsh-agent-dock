@@ -50,20 +50,22 @@ window.__ModuleLoader__.load({
       useEffect(function () {
         var alive = true;
         var timer = null;
-        async function tick() {
-          try {
-            var res = await fetch("/agent-dock/status", { cache: "no-store" });
-            var body = await res.json();
-            if (!alive) return;
-            if (body.pollIntervalMs && body.pollIntervalMs >= 500) pollRef.current = body.pollIntervalMs;
-            setState({ loading: false, serverOk: !!body.serverOk, forkOk: !!body.forkOk, mine: body.mine || null, error: body.error || null });
-          } catch (err) {
-            if (alive) setState({ loading: false, serverOk: false, forkOk: false, mine: null, error: String(err && err.message || err) });
-          }
+        function tick() {
+          fetch("/agent-dock/status", { cache: "no-store" })
+            .then(function (res) { return res.json(); })
+            .then(function (body) {
+              if (!alive) return;
+              if (body.pollIntervalMs && body.pollIntervalMs >= 500) pollRef.current = body.pollIntervalMs;
+              setState({ loading: false, serverOk: !!body.serverOk, forkOk: !!body.forkOk, mine: body.mine || null, error: body.error || null });
+              if (body.mine) setWaking(false);
+            })
+            .catch(function (err) {
+              if (alive) setState({ loading: false, serverOk: false, forkOk: false, mine: null, error: String(err && err.message || err) });
+            })
+            .then(function () { if (alive) timer = setTimeout(tick, pollRef.current); });
         }
         tick();
-        timer = setInterval(tick, pollRef.current);
-        return function () { alive = false; if (timer) clearInterval(timer); };
+        return function () { alive = false; if (timer) clearTimeout(timer); };
       }, []);
 
       async function onWake() {
@@ -72,7 +74,8 @@ window.__ModuleLoader__.load({
         try {
           await fetch("/agent-dock/wake", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
         } catch (err) { /* 轮询会反映状态 */ }
-        setTimeout(function () { setWaking(false); }, 3000);
+        // 30s 安全兜底：正常时下一次 status 返回 mine 即复位
+        setTimeout(function () { setWaking(false); }, 30000);
       }
       function renderContent() {
         var meta = state.mine ? (STATUS_META[state.mine.state] || STATUS_META.unknown) : null;
