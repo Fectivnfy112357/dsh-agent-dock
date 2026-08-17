@@ -71,17 +71,25 @@
 - DSH 写任务上下文文件 → `agent_prompt` 发浓缩提示词 → mcode 结果写回文件 → DSH 读文件 + `agent_read` 补实时状态。
 - 每次委托带 task-id，可追溯。
 
-### Q10 mcode 实例策略 → `C（单实例 v1 + 扩展口）`
-- v1：固定 pane 名 `mcode`（唯一），跨任务复用；幂等唤醒（已存在则聚焦不重开）。
+### Q10 mcode 实例策略 → `C（单实例 v1 + 扩展口）`（v1.1 修订：归属判定）
+- v1 原决议：固定 pane 名 `mcode`（唯一），跨任务复用；幂等唤醒（已存在则聚焦不重开）。
+- **v1.1 修订（2026-08）**：改为「paneName + cwd」**归属判定**（lib/owned.js）——
+  插件只认「名字 = paneName 且 pane 工作目录匹配 cwd」的 agent 为自己的；
+  用户在其它目录/workspace 手动启动的同名 mcode **不算插件的**，不会抢走 WebUI 按钮（按钮永远可点）。
+  寻址统一走 `resolveTarget`（pane_id 优先/名字兜底），路由/工具不再直接拼 `cfg.paneName`。
+- cwd 期望值来自调用方显式传入：WebUI 按钮从当前会话（sessions summary）取会话工作目录；
+  工具调用方（DSH agent）显式传当前工作目录；服务端回退链为 `cfg.mcodeCwd → process.cwd()` 兜底。
 - 扩展：worktree 并行多实例留给以后。
 
 ### Q11 配置面 → `按推荐清单`
 `herdrBin`（自动探测）、`mcodeCwd`（默认 DSH 当前工作目录）、`paneName`（默认 `mcode`，须匹配 `[a-z][a-z0-9_-]{0,31}`）、`pollIntervalMs`（2000）、`delegationTimeoutMs`（900000）、`resumeLastSession`（false）、`autoApprove`（true；类别：文件读写/测试/常规命令）。
 无配置面板 UI，改 `config.toml`。
 
-### Q12 按钮/徽章交互边界 → `按推荐`
-未运行=唤醒（绿/灰）；运行中=徽章（idle 灰 / working 琥珀 / blocked 红 / done 绿 / 离线），悬停提示 pane 名与最近状态；点击不做第二行为。
-v1 不做：停止/聚焦快捷按钮、详情抽屉、通知推送（stop 由 `agent_stop` 工具兜底）。
+### Q12 按钮/徽章交互边界 → `按推荐`（v1.1 修订：徽章可点击）
+- v1 原决议：未运行=唤醒（绿/灰）；运行中=徽章（idle 灰 / working 琥珀 / blocked 红 / done 绿 / 离线），悬停提示 pane 名与最近状态；**点击不做第二行为**。
+- **v1.1 修订（2026-08）**：徽章改为可点击按钮——点击 = 幂等 wake（existing 分支）+ 自动聚焦该 pane（`herdr agent focus`）；
+  未归属时（`mine=null`）按钮始终可点 = 唤醒。修复「存在任意同名 agent 时按钮变灰不可用」的缺陷。
+- v1 不做：停止/聚焦独立快捷按钮、详情抽屉、通知推送（stop 由 `agent_stop` 工具兜底；聚焦随点击/唤醒自动完成）。
 
 ### Q13 包名与扩展位 → `dsh-agent-dock`
 - 概念是`通用 agent 停靠台`，v1 只注册 `minimax` provider。
@@ -165,7 +173,7 @@ SKILL.md 是双格式唯一内容源，DSH agent 全自动协同的操作规程�
 | 键 | 默认 | 说明 |
 |---|---|---|
 | `herdrBin` | 自动探测 | herdr 可执行文件路径；探测失败或非 fork 版 → 界面报错 |
-| `mcodeCwd` | DSH 当前工作目录 | mcode pane 工作目录 |
+| `mcodeCwd` | 服务端回退值（默认 null → process.cwd） | mcode pane 工作目录；WebUI/工具调用方显式传 cwd 优先于此值 |
 | `paneName` | `mcode` | 协同 pane 名（`[a-z][a-z0-9_-]{0,31}`） |
 | `pollIntervalMs` | 2000 | 徽章轮询间隔 |
 | `delegationTimeoutMs` | 900000 | 单次委托超时 |

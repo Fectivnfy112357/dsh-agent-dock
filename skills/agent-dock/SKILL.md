@@ -23,6 +23,18 @@ whenToUse: 用户请求使用 mcode/唤醒 mcode/让 mcode 干活；或任务复
   若 `serverOk=false` → 直接 `agent_wake`（插件会自动拉起 headless herdr server）。
 - 不要直接调用 `herdr` CLI——只允许用 `agent_*` 工具（插件后端统一封装，护栏在插件内）。
 
+### 归属规则（v1.1，重要）
+
+插件的 mcode 是**「按名字 + 工作目录归属」**的，不是全局唯一：
+
+- `agent_wake` / 徽章只认「名字 = paneName（默认 mcode）**且 pane 工作目录匹配 cwd**」的 agent；
+- 你在其它目录 / workspace 手动开的 mcode **不会**被插件认领，也不会抢走 WebUI 按钮——按钮永远可点；
+- 因此在 DSH 侧调用 `agent_*` 工具时，**务必显式传 `cwd` = 当前会话工作目录**（系统提示会给出，
+  如 `D:\\programming\\projects\\dsh_worlspace`）——不要依赖服务端默认值（服务端回退链是
+  `cfg.mcodeCwd → process.cwd()`，而 process.cwd 是 dsh web 进程的启动目录，**不是**会话工作目录）。
+- 已归属的 agent 存在时，点击按钮 / `agent_wake` 是**幂等唤醒 + 自动聚焦该 pane**（`herdr agent focus`）；
+  未归属时则新建 pane 并唤醒。
+
 ## 1. 触发标准（何时委托给 mcode）
 
 **适合委托**：多文件修改、需要长时自主循环、可独立交付的子任务（写文档/写测试/独立重构/资料整理）、
@@ -82,12 +94,14 @@ whenToUse: 用户请求使用 mcode/唤醒 mcode/让 mcode 干活；或任务复
 
 | 工具 | 用途 | 关键参数 |
 |---|---|---|
-| `agent_wake` | 唤醒/确保 mcode 在跑（幂等） | provider, cwd |
-| `agent_status` | 感知存在与状态 | previewLines |
-| `agent_prompt` | 提交任务/指令（可选等待） | text, wait, until, timeoutMs |
-| `agent_wait` | 等状态（idle/working/blocked/done） | until, timeoutMs |
-| `agent_read` | 读终端输出/对话框 | source, lines |
-| `agent_stop` | 打断（esc→ctrl+c） | keys |
+| `agent_wake` | 唤醒/确保 mcode 在跑（幂等；已归属则聚焦） | provider, **cwd** |
+| `agent_status` | 感知归属存在与状态 | previewLines, cwd |
+| `agent_prompt` | 提交任务/指令（可选等待） | text, wait, until, timeoutMs, cwd |
+| `agent_wait` | 等状态（idle/working/blocked/done） | until, timeoutMs, cwd |
+| `agent_read` | 读终端输出/对话框 | source, lines, cwd |
+| `agent_stop` | 打断（esc→ctrl+c） | keys, cwd |
+
+> 所有 `agent_*` 工具都支持 `cwd` 参数；**调用时传当前会话工作目录**（见 §0 归属规则）。
 扩展位：本协议按 provider 参数化；新增 claude/opencode 时工具不变，仅 provider 注册扩展
 （插件侧 TODO 标记处）。
 
@@ -95,4 +109,6 @@ whenToUse: 用户请求使用 mcode/唤醒 mcode/让 mcode 干活；或任务复
 - 检测锚定 mcode v0.1.2 屏幕文本（如 "◆ Approval needed"、Plan 模式对话框），mcode UI 迭代后
   检测规则需随插件/ fork 更新。
 - 屏幕读取可能丢已滚动输出 → 交付物一律要求落盘文件。
-- 插件单实例模型（固定 pane 名 mcode）；多实例并发（worktree 并行）为预留扩展。
+- 插件单实例模型（固定 pane 名 mcode），但归属判定为「paneName + cwd」双重匹配——
+  其它目录手动启动的同名 mcode 不算插件的，DSH 按钮/工具只认工作目录匹配的那个。
+- 多实例并发（worktree 并行）为预留扩展（DESIGN Q10 TODO）。

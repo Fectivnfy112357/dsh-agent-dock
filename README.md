@@ -50,4 +50,9 @@ node scripts/e2e.mjs       # 集成测试（真实 herdr + mcode，独立探针 
 
 - 检测锚定 mcode v0.1.2 屏幕文本，mcode UI 迭代后需同步更新检测规则。
 - mcode TUI 用 alternate screen，屏幕回读可能丢已完成输出 → 交付物必须落盘（.mcode-handoff/<task-id>.result.md）。
-- 单实例模型（固定 pane 名），多实例/多 provider（claude/opencode）为预留扩展（lib/providers.js 注释位）。
+- 单实例模型（固定 pane 名 mcode），但**归属判定为 paneName + cwd 双重匹配**（lib/owned.js）：
+  其它目录手动启动的同名 mcode 不算插件的，DSH 按钮/工具只认工作目录匹配的那个（WebUI 按钮从 ctx.sessions.list
+  实时取当前会话 cwd，agent_* 工具建议显式传 cwd）。已归属时点击按钮/agent_wake 为幂等唤醒 + 自动聚焦该 pane。
+  （v1.2：修复 client 拿不到会话 cwd → 唤醒到 dsh web 进程目录（C:\Users\32115）的 bug——
+  用 ctx.sessions.list.getSnapshot().items[sessionId].cwd 作为按钮 payload。）
+- 多实例/多 provider（claude/opencode）为预留扩展（lib/providers.js 注释位）。

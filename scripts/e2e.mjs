@@ -59,13 +59,21 @@ const request = async (path, method = 'GET', body) => {
   });
   return { status: res.status, body: await res.json().catch(() => ({})) };
 };
-const results = { wake: null, status: null, prompt: null, read: null, stop: null };
+const results = { wake: null, wake2: null, status: null, prompt: null, read: null, stop: null };
 try {
-  // 1) wake：在探针 workspace 里唤醒 mcode（hostPane 内部覆盖）
-  results.wake = await api.wake({ hostPane: rootPane });
+  // 1) wake：在探针 workspace 里唤醒 mcode（hostPane 内部覆盖 + 显式 cwd）
+  const probeCwd = process.cwd();
+  results.wake = await api.wake({ hostPane: rootPane, cwd: probeCwd });
   console.log('[e2e] wake =>', JSON.stringify(results.wake).slice(0, 300));
-  // 2) status 路由（GET）
-  results.status = await request('/agent-dock/status');
+  // 1b) 幂等 existing 分支（v1.1）：再次 wake 应命中归属（cwd 匹配）→ existing + focused
+  results.wake2 = await api.wake({ hostPane: rootPane, cwd: probeCwd });
+  console.log('[e2e] wake2 (idempotent) =>', JSON.stringify(results.wake2).slice(0, 300));
+  // 1c) 归属不匹配的 cwd 不应命中（另开目录的同名 agent 不抢归属）：wake 会新建而非 existing
+  const otherCwd = 'C:\\Users\\32115';
+  const wakeOther = await api.wake({ hostPane: rootPane, cwd: otherCwd }).catch((e) => ({ error: String(e), outcome: 'error' }));
+  console.log('[e2e] wake@otherCwd =>', JSON.stringify(wakeOther).slice(0, 300));
+  // 2) status 路由（GET，带期望 cwd 查询参数）
+  results.status = await request('/agent-dock/status?cwd=' + encodeURIComponent(probeCwd));
   console.log('[e2e] GET /agent-dock/status =>', JSON.stringify(results.status).slice(0, 300));
   console.log('[e2e]   mine:', JSON.stringify(results.status.body.mine));
   // 3) prompt 极小任务（真实 mcode 执行，等待 settle）
@@ -87,6 +95,9 @@ try {
   console.log('[e2e] close workspace', wsId, '=>', JSON.stringify(close));
   server.close();
 }
-const okAll = results.wake && results.status?.body?.ok && results.prompt?.status === 200 && results.read?.status === 200 && results.stop?.status === 200;
+const okExisting = results.wake2?.outcome === 'existing' && results.wake2?.focused === true;
+const okMine = results.status?.body?.mine?.pane === (results.wake?.pane ?? results.wake2?.pane);
+const okAll = results.wake && okExisting && okMine && results.status?.body?.ok && results.prompt?.status === 200 && results.read?.status === 200 && results.stop?.status === 200;
+console.log('[e2e] existing-branch:', okExisting, '| mine-match:', okMine);
 console.log(okAll ? '[e2e] SUCCESS' : '[e2e] PARTIAL/FAILED');
 process.exit(okAll ? 0 : 2);

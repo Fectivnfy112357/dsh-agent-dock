@@ -1,10 +1,13 @@
 /**
  * dsh-agent-dock — WebUI 客户端（单文件，__ModuleLoader__ 格式，免构建）。
- * 依赖：仅 react（module table 提供）；服务：slots（dsh-client-runtime）+ locale（dsh-client-locale）。
- * 交互（DESIGN Q2/Q12）：
- *   - 未运行：会话头部按钮"唤醒 mcode"（绿），点击 POST /agent-dock/wake；
- *   - 运行中：状态徽章（idle 灰 / working 琥珀 / blocked 红 / done 绿 / 离线），悬停展示 pane 名；
- *   - 轮询 /agent-dock/status，间隔取服务端配置 pollIntervalMs（默认 2s）。
+ * 依赖：仅 react（module table 提供）；服务：slots + locale + sessions（dsh-client-runtime）。
+ * 交互（DESIGN Q2/Q12 修订）：
+ *   - 未运行：会话头部按钮"唤醒 mcode"（绿），点击 POST /agent-dock/wake（携带当前会话 cwd）；
+ *   - 运行中（归属命中）：可点击徽章（idle 灰 / working 琥珀 / blocked 红 / done 绿 / 离线），
+ *     点击 = 幂等 wake + 聚焦该 pane（v1.1，DESIGN Q12 修订）；悬停展示 pane 名与工作目录；
+ *   - 轮询 /agent-dock/status?cwd=...，间隔取服务端配置 pollIntervalMs（默认 2s）。
+ *   - cwd 取自当前会话（v1.2：ctx.sessions.list.getSnapshot().items[sessionId].cwd，
+ *     旧实现 ctx.sessions.summaries 不存在导致按钮 payload 为空，唤醒到 dsh web 进程目录的 bug）。
  * 扩展位：按钮/徽章与 provider 无关；新增 provider 时只需扩展状态映射文案。
  */
 window.__ModuleLoader__.load({
@@ -16,6 +19,8 @@ window.__ModuleLoader__.load({
     var react = require("react");
 
     var NS = "dsh-agent-dock";
+    // 由 apply(ctx) 在 host 调用时填入；factory 阶段 ctx 尚未构造，无法直接捕获到闭包。
+    var _ctxRef = { current: null };
     var STATUS_META = {
       idle:    { label: "idle", color: "#9aa0a6" },
       working: { label: "working", color: "#e8a33d" },
@@ -37,9 +42,51 @@ window.__ModuleLoader__.load({
       noFork: "fork build required",
       btnTitle: "Wake Herdr-hosted MiniMax Code (mcode)",
     };
-    /** 组件：唤醒按钮 / 状态徽章二态一体。 */
+    /**
+     * 从 sessions service 取当前 sessionId 对应的 cwd（修复唤醒到错误目录的 bug）。
+     * ctx.sessions.summaries 不存在 —— 正确接口是 ctx.sessions.list.getSnapshot()。items: TitledSessionSummary[]。
+     * subscribe 触发 setState，让 cwd 变化时组件重渲染。
+     */
+    function useSessionCwd(sessionId) {
+      var useState = react.useState;
+      var useEffect = react.useEffect;
+      // listApi 由 apply(ctx) 时挂到 _ctxRef.current.sessions.list；factory 阶段 _ctxRef.current=null。
+      var ctx = _ctxRef.current;
+      var listApi = ctx && ctx.sessions && ctx.sessions.list;
+      function readCwd() {
+        if (!listApi || typeof listApi.getSnapshot !== 'function') return null;
+        try {
+          var snap = listApi.getSnapshot();
+          var items = (snap && snap.items) || [];
+          for (var i = 0; i < items.length; i++) {
+            if (items[i].sessionId === sessionId) return items[i].cwd || null;
+          }
+        } catch (e) { /* swallow */ }
+        return null;
+      }
+      var pair = useState(readCwd());
+      var cwd = pair[0];
+      var setCwd = pair[1];
+      useEffect(function () {
+        // 组件挂载时 ctx 可能尚未构造（apply 比 React 树先；如有 race 这里重读一次）
+        var liveList = (_ctxRef.current && _ctxRef.current.sessions && _ctxRef.current.sessions.list) || listApi;
+        if (!liveList || typeof liveList.subscribe !== 'function' || !sessionId) return;
+        var unsub = liveList.subscribe(function () { setCwd(readCwd()); });
+        // 立即重读一次，覆盖 race 期间 ctx 后到的情形
+        setCwd(readCwd());
+        return unsub;
+      }, [sessionId]);
+      return cwd;
+    }
+
+    /** 组件：唤醒按钮 / 状态徽章二态一体（徽章可点击 = 幂等 wake + 聚焦）。 */
     function AgentDockWidget(props) {
       var t = props.t;
+      var sessionId = props.sessionId;
+      var passedCwd = props.cwd;
+      var sessionCwd = useSessionCwd(sessionId);
+      // 优先级：显式 props.cwd > sessions service 实时取的 sessionCwd > null（按钮点击时 fallback 到 process.cwd 服务端兜底）
+      var cwd = passedCwd || sessionCwd || null;
       var useState = react.useState;
       var useEffect = react.useEffect;
       var useRef = react.useRef;
@@ -51,7 +98,8 @@ window.__ModuleLoader__.load({
         var alive = true;
         var timer = null;
         function tick() {
-          fetch("/agent-dock/status", { cache: "no-store" })
+          var url = "/agent-dock/status" + (cwd ? "?cwd=" + encodeURIComponent(cwd) : "");
+          fetch(url, { cache: "no-store" })
             .then(function (res) { return res.json(); })
             .then(function (body) {
               if (!alive) return;
@@ -66,13 +114,14 @@ window.__ModuleLoader__.load({
         }
         tick();
         return function () { alive = false; if (timer) clearTimeout(timer); };
-      }, []);
+      }, [cwd]);
 
       async function onWake() {
         if (waking) return;
         setWaking(true);
         try {
-          await fetch("/agent-dock/wake", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+          var payload = JSON.stringify(cwd ? { cwd: cwd } : {});
+          await fetch("/agent-dock/wake", { method: "POST", headers: { "content-type": "application/json" }, body: payload });
         } catch (err) { /* 轮询会反映状态 */ }
         // 30s 安全兜底：正常时下一次 status 返回 mine 即复位
         setTimeout(function () { setWaking(false); }, 30000);
@@ -99,7 +148,7 @@ window.__ModuleLoader__.load({
           return react.createElement("button", {
             onClick: onWake,
             disabled: !!waking,
-            style: buttonStyle(state.mine ? {} : idleStyle),
+            style: buttonStyle(idleStyle),
             title: t("btnTitle")
           }, waking ? t("waking") : t("wake"));
         }
@@ -114,10 +163,18 @@ window.__ModuleLoader__.load({
             verticalAlign: "middle",
           }
         });
-        return react.createElement("span", {
-          style: Object.assign({}, baseStyle, { cursor: "default", borderColor: meta.color, color: meta.color }),
-          title: (state.mine.name || state.mine.pane) + " · " + meta.label + (state.mine.workspace ? " · " + state.mine.workspace : "")
-        }, dot, meta.label);
+        var badgeTitle = (state.mine.name || state.mine.pane) + " · " + meta.label
+          + (state.mine.cwd ? " · " + state.mine.cwd : "")
+          + (state.mine.workspace ? " · ws " + state.mine.workspace : "")
+          + " — 点击聚焦/唤醒";
+        // v1.1：徽章可点击（幂等 wake + 聚焦该 pane），不再是纯展示 span
+        return react.createElement("button", {
+          onClick: onWake,
+          disabled: !!waking,
+          className: "agent-dock-badge",
+          style: Object.assign({}, baseStyle, { borderColor: meta.color, color: meta.color }),
+          title: badgeTitle
+        }, dot, waking ? (t("wake")) : meta.label);
       }
 
       var baseStyle = {
@@ -147,9 +204,11 @@ window.__ModuleLoader__.load({
       return react.createElement("span", { className: "agent-dock-pill" }, renderContent());
     }
 
-    var inject = ["slots", "locale"];
+    var inject = ["slots", "locale", "sessions"];
 
     function apply(ctx) {
+      // v1.2：将 ctx 暴露给组件实例化的闭包（factory 阶段 ctx 尚未构造，apply 时回填）。
+      _ctxRef.current = ctx;
       ctx.effect(function () { return ctx.locale.register(NS, { zh: zh, en: en }); }, "dsh-agent-dock: dictionaries");
       var t = ctx.locale.bind(NS);
       ctx.slots.inject("conversation.session.header.actions", function () {
@@ -159,8 +218,12 @@ window.__ModuleLoader__.load({
           order: 60,
           label: function () { return t("wake"); },
           locale: NS,
-          inject: function () { return { t: t }; }
-        }, function () { return react.createElement(AgentDockWidget, { t: t }); });
+          // v1.2：组件内用 useSessionCwd(sessionId) 实时从 ctx.sessions.list 拿 cwd（修复唤醒到错误目录的根因）。
+          // 这里不再直接预读 cwd —— 交由组件订阅 sessions list 自动更新。
+          inject: function (sessionId) {
+            return { t: t, sessionId: sessionId, cwd: null };
+          }
+        }, function (props) { return react.createElement(AgentDockWidget, { t: props.t, sessionId: props.sessionId, cwd: props.cwd }); });
       });
     }
 
