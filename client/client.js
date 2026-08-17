@@ -200,6 +200,18 @@ window.__ModuleLoader__.load({
     function TerminalView(props) {
       var t = props.t;
       var sessionId = props.sessionId;
+      try {
+        return TerminalViewInner(props);
+      } catch (err) {
+        // 任何渲染错误都落到这里——把错误原文显示出来，避免整个 panel 变空白
+        return react.createElement("div", {
+          style: { padding: 12, color: "#e5584b", fontFamily: "ui-monospace, monospace", fontSize: 12, whiteSpace: "pre-wrap", background: "#0e0e10", minHeight: 200 }
+        }, "dsh-agent-dock TerminalView render error:\n\n" + String(err && err.stack || err) + "\n\nsessionId=" + sessionId);
+      }
+    }
+    function TerminalViewInner(props) {
+      var t = props.t;
+      var sessionId = props.sessionId;
       var sessionCwd = useSessionCwd(sessionId);
       var cwd = sessionCwd;
       var xterm = useXterm();
@@ -343,13 +355,35 @@ window.__ModuleLoader__.load({
         }, "xterm.js load failed: " + xterm.error + "\n\n请检查网络（CDN：cdn.jsdelivr.net / unpkg.com），或在内网部署时把 xterm.js 与 xterm-addon-fit 安装到本地 module table。");
       };
 
+      var diagLine = (function () {
+        var parts = [];
+        parts.push("v0.2.1");
+        parts.push("cwd=" + (cwd || "null"));
+        if (status.mine) parts.push("mine=" + status.mine.state + "@" + status.mine.pane);
+        if (xterm.ready) parts.push("xterm=ok");
+        else if (xterm.error) parts.push("xterm=err");
+        return parts.join(" · ");
+      })();
       var headerBar = react.createElement("div", {
         style: {
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-          padding: "8px 12px", color: "#cfd2d6", fontSize: 12,
-          borderBottom: "1px solid #2a2a2e"
+          display: "flex", alignItems: "center", justifyContent: "space-between", flexDirection: "column",
+          padding: "8px 12px", color: "#cfd2d6", fontSize: 12, gap: 4,
+          borderBottom: "1px solid #2a2a2e", alignItems: "flex-start"
         }
-      }, react.createElement("span", null, t("panelTitle") + " · " + (status.mine && status.mine.cwd ? status.mine.cwd : (cwd || "—"))),
+      },
+        react.createElement("div", { style: { display: "flex", justifyContent: "space-between", width: "100%" } },
+          react.createElement("span", null, t("panelTitle") + " · " + (status.mine && status.mine.cwd ? status.mine.cwd : (cwd || "—"))),
+          react.createElement("button", {
+            onClick: function () { if (props.closeDetails) props.closeDetails(); },
+            title: t("panelClose"),
+            style: {
+              background: "transparent", border: "1px solid #3a3a40", borderRadius: 4,
+              color: "#cfd2d6", padding: "2px 8px", cursor: "pointer", fontSize: 11
+            }
+          }, "×")
+        ),
+        react.createElement("span", { style: { fontSize: 10, color: "#7f858c", wordBreak: "break-all" } }, diagLine)
+      );
         react.createElement("button", {
           onClick: function () { if (props.closeDetails) props.closeDetails(); },
           title: t("panelClose"),
@@ -412,9 +446,10 @@ window.__ModuleLoader__.load({
       return react.createElement("div", {
         style: {
           display: "flex", flexDirection: "column",
-          width: "100%", height: "100%",
+          width: "100%", height: "100%", minHeight: 300,
           background: "#0e0e10", color: "#e6e6e6",
-          fontFamily: "ui-monospace, Consolas, monospace"
+          fontFamily: "ui-monospace, Consolas, monospace",
+          boxSizing: "border-box"
         }
       }, headerBar, body, inputRow, keyRow);
     }
