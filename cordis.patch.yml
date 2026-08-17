@@ -1,0 +1,5 @@
+# dsh bundle patch: inserts dsh-agent-dock into a profile's layer stack.
+# config keys are optional; all have defaults (see lib/types.js DEFAULT_CONFIG).
+- insert:
+    - id: agent-dock
+      name: 'dsh-agent-dock'

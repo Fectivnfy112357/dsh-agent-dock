@@ -1,0 +1,64 @@
+{
+  "name": "dsh-agent-dock",
+  "version": "0.1.0",
+  "description": "Wake and coordinate agent CLIs hosted by Herdr from the DeepSeek Harness web UI. v1: MiniMax Code (mcode) detection states. · 在 DSH WebUI 一键唤醒 herdr 代管的 coding agent 并自动协同（v1: mcode）",
+  "type": "module",
+  "main": "lib/index.js",
+  "license": "MIT",
+  "keywords": [
+    "deepseek",
+    "harness",
+    "dsh",
+    "dsh-plugin",
+    "herdr",
+    "mcode",
+    "minimax",
+    "agent-plugins",
+    "dual-format",
+    "copilot",
+    "agent-dock"
+  ],
+  "files": [
+    "lib",
+    "client",
+    "skills",
+    "docs",
+    "scripts",
+    "cordis.patch.yml",
+    "plugin.json",
+    "README.md",
+    "README.zh.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": "./client/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "check": "node scripts/verify.mjs && vitest run",
+    "test": "vitest run",
+    "verify": "node scripts/verify.mjs"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.10"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-locale"
+      ],
+      "platform": "web"
+    }
+  }
+}

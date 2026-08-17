@@ -1,0 +1,23 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "dsh-agent-dock",
+  "version": "0.1.0",
+  "description": "WebUI one-click wake + status badge + DSH agent_* tools for Herdr-hosted coding agents; v1 detects MiniMax Code (mcode) idle/working/blocked via the Herdr fork. 在 DSH WebUI 一键唤醒 herdr 代管的 mcode 并自动协同。",
+  "author": {
+    "name": "Jia Xiaoyuan",
+    "url": "https://github.com/kele98"
+  },
+  "license": "MIT",
+  "keywords": [
+    "deepseek",
+    "harness",
+    "dsh",
+    "dsh-plugin",
+    "herdr",
+    "mcode",
+    "minimax",
+    "agent-plugins",
+    "dual-format",
+    "agent-dock"
+  ]
+}
