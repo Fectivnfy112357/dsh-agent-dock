@@ -105,6 +105,16 @@ whenToUse: 用户请求使用 mcode/唤醒 mcode/让 mcode 干活；或任务复
 扩展位：本协议按 provider 参数化；新增 claude/opencode 时工具不变，仅 provider 注册扩展
 （插件侧 TODO 标记处）。
 
+## 7. WebUI 右侧终端面板（v1.4）
+
+插件在 DSH 右侧 `conversation.details.tool` slot 注册了终端面板（xterm.js），把 mcode 的实时 TUI 渲染到 WebUI：
+
+- 数据源：`herdr agent read <pane> --source recent --format ansi`（完整 VT 序列，含颜色 / 框线 / 光标反显）
+- 输入回传：`POST /plugins/dsh-agent-dock/terminal/send` → `herdr pane send-text` 或 `herdr agent send-keys`
+- 轮询间隔：服务端配置 `terminalPollMs`（默认 1500ms）
+- 触发：唤醒按钮/状态徽章点击后自动 `layout.openDetails()` 打开
+- 与 DSH agent 协作时，面板可作为「查看 mcode 在干什么」的可视化旁路
+
 ## 6. 已知边界
 - 检测锚定 mcode v0.1.2 屏幕文本（如 "◆ Approval needed"、Plan 模式对话框），mcode UI 迭代后
   检测规则需随插件/ fork 更新。

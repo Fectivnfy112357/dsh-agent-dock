@@ -9,6 +9,7 @@
 - **WebUI 按钮**（会话头部）：一键拉起 headless herdr server（若未运行）→ 在当前 workspace 右侧分裂兄弟 pane → 启动 mcode → 等屏幕检测识别 minimax agent → 命名 `mcode`（幂等：已存在则复用）。
 - **状态徽章**：2 秒轮询，显示 idle / working / blocked / done / 离线；悬停显示 pane 与 workspace。
 - **DSH 动态工具**：`agent_wake / agent_status / agent_prompt / agent_wait / agent_read / agent_stop`，全自动协同协议见技能 `agent-dock`。
+- **右侧终端面板**（v1.4）：点击唤醒/徽章自动展开右侧 details 面板，xterm.js 实时渲染 mcode 的 TUI（herdr agent read --format ansi 的完整 VT 序列：颜色/框线/光标全保留）。支持文本输入（pane send-text）与按键（agent send-keys：esc/enter/ctrl+c/方向键等）。轮询间隔可由 `terminalPollMs` 配置（默认 1500ms）。
 
 ## 安装
 
@@ -34,6 +35,7 @@ yaml
         resumeLastSession: false     # true 时 mcode -c 续接
         autoApprove: true            # blocked 白名单自动放行（危险动作仍转人工）
         herdrBin: herdr              # herdr 可执行文件路径
+        terminalPollMs: 1500         # 右侧终端面板轮询间隔（250-60000ms）
 ```
 
 ## 开发
@@ -53,6 +55,7 @@ node scripts/e2e.mjs       # 集成测试（真实 herdr + mcode，独立探针 
 - 单实例模型（固定 pane 名 mcode），但**归属判定为 paneName + cwd 双重匹配**（lib/owned.js）：
   其它目录手动启动的同名 mcode 不算插件的，DSH 按钮/工具只认工作目录匹配的那个（WebUI 按钮从 ctx.sessions.list
   实时取当前会话 cwd，agent_* 工具建议显式传 cwd）。已归属时点击按钮/agent_wake 为幂等唤醒 + 自动聚焦该 pane。
-  （v1.2：修复 client 拿不到会话 cwd → 唤醒到 dsh web 进程目录（C:\Users\32115）的 bug——
-  用 ctx.sessions.list.getSnapshot().items[sessionId].cwd 作为按钮 payload。）
+  （v1.2/v1.3：修复 client 拿不到会话 cwd → 唤醒到 dsh web 进程目录（C:\Users\32115）的 bug。  注意 ctx.sessions.list.getSnapshot() 的返回形状是 { ids, byId, ... }，会话 cwd 在
+  byId[sessionId].cwd —— 快照没有 items 数组（items 是 SessionManager.getListSnapshot() 的形状），
+  v1.2 误读 snap.items 导致 cwd 恒为 null，v1.3 改为按 byId 取数。）
 - 多实例/多 provider（claude/opencode）为预留扩展（lib/providers.js 注释位）。

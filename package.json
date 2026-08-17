@@ -1,6 +1,6 @@
 {
   "name": "dsh-agent-dock",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Wake and coordinate agent CLIs hosted by Herdr from the DeepSeek Harness web UI. v1: MiniMax Code (mcode) detection states. · 在 DSH WebUI 一键唤醒 herdr 代管的 coding agent 并自动协同（v1: mcode）",
   "type": "module",
   "main": "lib/index.js",
