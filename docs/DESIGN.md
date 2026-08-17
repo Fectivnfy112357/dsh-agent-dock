@@ -97,7 +97,7 @@ v1 不做：停止/聚焦快捷按钮、详情抽屉、通知推送（stop 由 `
 ```
 WebUI (conversation.session.header.actions)
    │ 按钮/徽章（client.js: slots.inject + React.createElement + fetch）
-   │ fetch("/agent-dock/wake" | "/agent-dock/status")
+   │ fetch("/agent-dock/wake|status|prompt|read|stop")
    ▼
 lib/index.js (Cordis 插件 apply(ctx))
    ├─ ctx.inject(['webServer']) → mountRoutes（dshmarket 模式）
@@ -111,6 +111,7 @@ herdr fork server（无则 headless 拉起）→ mcode pane（screen 检测 → 
 
 核心链路：
 - 唤醒：探测 socket → 无则起 headless `herdr server` → 当前 workspace/tab 右侧分裂（`--no-focus`，cwd=mcodeCwd）→ `pane run` 执行 `mcode`（或 `mcode -c`）→ herdr 自动识别 minimax agent → 命名 `mcode`。幂等：已存在只聚焦。
+- 路由：`GET /agent-dock/status`（徽章轮询）、`POST /agent-dock/wake|stop|prompt|read`（同源限制）。`wake` 支持内部 `hostPane` 覆盖（测试用，路由/工具不暴露）。
 - 感知：徽章 2s 轮询 `herdr agent get <paneName>`；工具 `agent_status` 同源。
 - 协同：判复杂 → 写 `.mcode-handoff/<task-id>.md` → `agent_prompt mcode "读任务文件 X，执行，结果写回 X.result.md" --wait` → 循环 wait/read → blocked 处理（白名单/转人工）→ 超时/打断。
 

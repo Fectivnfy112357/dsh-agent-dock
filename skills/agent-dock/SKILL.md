@@ -1,0 +1,97 @@
+---
+name: agent-dock
+description: >-
+  Coordinate with the docked coding agent (v1: MiniMax Code / mcode) hosted in Herdr:
+  wake it, delegate complex tasks, read results, handle approval dialogs. Use when Herdr
+  is available (herdr fork with MiniMax detection installed), the user asks to use mcode,
+  a task is complex enough to delegate (multi-file changes, long autonomous loops, parallel
+  subtasks), or the user wants to see / hear the docked agent work. 通过 WebUI 按钮或 agent_*
+  工具唤醒 herdr 代管的 mcode 并自动协同推进任务。
+whenToUse: 用户请求使用 mcode/唤醒 mcode/让 mcode 干活；或任务复杂到适合委托给并行 agent；或需要 agent_* 工具与 herdr pane 中的 mcode 协同。
+---
+
+# agent-dock：与 herdr 代管的 coding agent 协同（v1: mcode）
+
+本技能定义 DSH agent 与 herdr 内 mcode pane 的**协同协议**：何时委托、如何交接上下文、
+如何等结果、如何处理权限对话框、如何被打断。配套动态工具 @BT@agent_wake / agent_status /
+@BT@agent_prompt / agent_wait / agent_read / agent_stop@BT@ 由 dsh-agent-dock 插件注册。
+
+## 0. 前置条件
+
+- 本机已安装 herdr fork（0.8.0 + MiniMax detection，kind 列表含 @BT@minimax@BT@）与 mcode（v0.1.2）。
+- 前提检查：@BT@agent_status@BT@。若 @BT@forkOk=false@BT@ → 明确告知用户需要 MiniMax detection 构建；
+  若 @BT@serverOk=false@BT@ → 直接 @BT@agent_wake@BT@（插件会自动拉起 headless herdr server）。
+- 不要直接调用 @BT@herdr@BT@ CLI——只允许用 @BT@agent_*@BT@ 工具（插件后端统一封装，护栏在插件内）。
+
+## 1. 触发标准（何时委托给 mcode）
+
+**适合委托**：多文件修改、需要长时自主循环、可独立交付的子任务（写文档/写测试/独立重构/资料整理）、
+可与当前主线并行推进的工作（用户同时还在跟 DSH 对话）。
+**不委托**：单文件小改、需要与用户反复确认的决策、涉及用户隐私/凭据/支付的操作、10 秒内能完成的事。
+
+## 2. 交接流程（一次委托 = 一个 task-id）
+1. @BT@agent_status@BT@ 确认 present 且 state 为 idle/done（working 中先 @BT@agent_wait@BT@ 等它停下再派活）。
+2. 在工作区根目录（mcode 的 cwd，即 DSH 当前工作目录）写任务上下文文件
+   @BT@.mcode-handoff/<task-id>.md@BT@，格式：
+
+@F3@markdown
+# Task <task-id>
+## Goal 目标
+<一个清晰的任务目标>
+## Constraints 约束
+- <约束 1>
+## Already done 已完成
+- <已完成的调研/现状，避免 mcode 重复劳动>
+## Expected output 期望产出
+<期望的交付形式：文件路径、测试用例、文档位置等>
+@F3@
+
+   <task-id> 建议形如 task-2026xxxx-abcdef（时间戳+随机后缀）。
+3. @BT@agent_prompt@BT@ 提交浓缩提示词（模板）：
+
+   > Execute task <task-id> for me.
+   > 1. Read the task file: .mcode-handoff/<task-id>.md (relative to the current working directory).
+   > 2. Complete the Goal subject to the Constraints. You may inspect code, run tests, and edit files as needed.
+   > 3. When finished, write a concise summary of what you did and the deliverables (paths, commands, results) to: .mcode-handoff/<task-id>.result.md. Reply with the result file path only.
+   即：上下文全量在文件里，提示词保持浓缩（DESIGN Q9）。
+4. @BT@agent_prompt --wait@BT@（默认等 idle/done/blocked）阻塞到这次委托进入稳定态。
+5. 读结果：先读 @BT@.mcode-handoff/<task-id>.result.md@BT@；如果不存在，用 @BT@agent_read@BT@ 看终端实时输出。
+   （mcode TUI 用 alternate screen，屏幕回读可能丢已完成输出——**交付物必须落盘**。）
+6. 汇总给用户：mcode 做了什么、产出了哪些文件/命令、有没有需要用户后续处理的事项。
+
+## 3. blocked（权限对话框）处理（DESIGN Q8）
+
+@BT@agent_prompt --wait@BT@ 或 @BT@agent_wait --until blocked@BT@ 命中 blocked 时：
+
+1. @BT@agent_read@BT@ 读对话框内容，明确它在请求什么权限。
+2. 分类：白名单（文件读写、跑测试、常规命令）→ 视为 auto，用 @BT@agent_prompt@BT@ 提交简短确认
+   （如 "Proceed / Allow / Yes" 或对话框显示的确认按键文字）后继续 @BT@agent_wait@BT@。
+3. 危险类别（删除/卸载/安装依赖/支付/凭据/网络外发/强制 git 操作/提权）→ **停止自动推进**，
+   把对话框内容完整贴给用户，等用户拍板；用户同意后 DSH 再替 mcode 提交确认。
+4. @BT@agent_status@BT@ 的 @BT@autoApprove@BT@ 开关由插件配置控制（默认开，仅放行白名单类）。
+
+## 4. 打断与超时
+- 用户中途发新消息：先 @BT@agent_stop@BT@（esc → ctrl+c 递进）打断 mcode，@BT@agent_read@BT@ 抓当前进度，
+  向用户汇报"mcode 已暂停，进度是 X，我可以继续处理你的新需求"，再处理新指令。
+- 单次委托默认 15 分钟超时（@BT@delegationTimeoutMs@BT@），超时先 @BT@agent_stop@BT@ 再汇报。
+- @BT@agent_wait@BT@/@BT@agent_prompt --wait@BT@ 可能返回：@BT@agent_blocked@BT@（见 §3）、@BT@agent_prompt_stalled@BT@
+  （提交后 5s 内无状态变化，重新提交或检查 pane）、@BT@timeout@BT@。
+
+## 5. 工具契约速查
+
+| 工具 | 用途 | 关键参数 |
+|---|---|---|
+| @BT@agent_wake@BT@ | 唤醒/确保 mcode 在跑（幂等） | provider, cwd |
+| @BT@agent_status@BT@ | 感知存在与状态 | previewLines |
+| @BT@agent_prompt@BT@ | 提交任务/指令（可选等待） | text, wait, until, timeoutMs |
+| @BT@agent_wait@BT@ | 等状态（idle/working/blocked/done） | until, timeoutMs |
+| @BT@agent_read@BT@ | 读终端输出/对话框 | source, lines |
+| @BT@agent_stop@BT@ | 打断（esc→ctrl+c） | keys |
+扩展位：本协议按 provider 参数化；新增 claude/opencode 时工具不变，仅 provider 注册扩展
+（插件侧 TODO 标记处）。
+
+## 6. 已知边界
+- 检测锚定 mcode v0.1.2 屏幕文本（如 "◆ Approval needed"、Plan 模式对话框），mcode UI 迭代后
+  检测规则需随插件/ fork 更新。
+- 屏幕读取可能丢已滚动输出 → 交付物一律要求落盘文件。
+- 插件单实例模型（固定 pane 名 mcode）；多实例并发（worktree 并行）为预留扩展。
