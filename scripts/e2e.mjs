@@ -19,13 +19,19 @@ const fakeHost = {
   webServer: { register: (route) => { routes.push(route); return () => { const i = routes.indexOf(route); if (i >= 0) routes.splice(i, 1); }; } },
   effect: (fn, tag) => fn(),
 };
+const registeredTools = [];
 const fakeCtx = {
   effect: (fn) => fn(),
   inject: (deps, fn) => { if (deps.includes('webServer')) fn(fakeHost); },
   skills: { register: () => () => {} },
   on: () => () => {},
+  tools: {
+    register: (definition) => {
+      registeredTools.push(definition.name);
+      return () => {};
+    },
+  },
 };
-globalThis.harness = { defineTool: (d) => d, registerTool: () => () => {} };
 
 // 挂载路由
 pluginApply(fakeCtx, cfg);

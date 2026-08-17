@@ -1,0 +1,13 @@
+fix(agent-dock): register dynamic tools via ctx.tools instead of the harness sandbox global
+
+Static bundle plugins are loaded by cordis-plugin-loader with plain ESM import() —
+globalThis.harness is always undefined for them (harness is a vm-sandbox global only
+for dynamic plugins' hostCode). Switch to the standard path:
+  ctx.tools.register(defineTool(def))   with defineTool from @deepseek-ai/dsh-tools
+- index.js: inject ['skills','webServer','tools']; drop harness guard; register via ctx.tools
+- tools.js: add output.render (jsonTextRender) to every agent_* tool (tools.register requires it)
+- package.json: @deepseek-ai/dsh-tools as optional peer + dev dependency (0.1.0-rc.6)
+- scripts/e2e.mjs: fake ctx gains tools.register shim; drop harness shim
+Verified: 19/19 unit tests, verify.mjs, live e2e against herdr+mcode (wake/status/prompt/read/stop)
+
+Syncs the fix that makes `dsh web` boot succeed (was: harness sandbox global unavailable).
