@@ -6,8 +6,9 @@
  *   - 运行中（归属命中）：可点击徽章（idle 灰 / working 琥珀 / blocked 红 / done 绿 / 离线），
  *     点击 = 幂等 wake + 聚焦该 pane（v1.1，DESIGN Q12 修订）；悬停展示 pane 名与工作目录；
  *   - 轮询 /agent-dock/status?cwd=...，间隔取服务端配置 pollIntervalMs（默认 2s）。
- *   - cwd 取自当前会话（v1.2：ctx.sessions.list.getSnapshot().items[sessionId].cwd，
- *     旧实现 ctx.sessions.summaries 不存在导致按钮 payload 为空，唤醒到 dsh web 进程目录的 bug）。
+ *   - cwd 取自当前会话（v1.3：ctx.sessions.list.getSnapshot().byId[sessionId].cwd；
+ *     v1.2 误读不存在的 snap.items/items[i].sessionId 导致 cwd 恒空、唤醒回退到 dsh web 进程目录；
+ *     更早 v1.0 用 ctx.sessions.summaries 同样不存在）。
  * 扩展位：按钮/徽章与 provider 无关；新增 provider 时只需扩展状态映射文案。
  */
 window.__ModuleLoader__.load({
@@ -44,7 +45,8 @@ window.__ModuleLoader__.load({
     };
     /**
      * 从 sessions service 取当前 sessionId 对应的 cwd（修复唤醒到错误目录的 bug）。
-     * ctx.sessions.summaries 不存在 —— 正确接口是 ctx.sessions.list.getSnapshot()。items: TitledSessionSummary[]。
+     * 正确接口是 ctx.sessions.list.getSnapshot() → { ids, byId, ... }，cwd 在
+     * byId[sessionId].cwd（快照没有 items 字段；v1.2 误读 snap.items 导致 cwd 恒为 null）。
      * subscribe 触发 setState，让 cwd 变化时组件重渲染。
      */
     function useSessionCwd(sessionId) {
@@ -57,9 +59,21 @@ window.__ModuleLoader__.load({
         if (!listApi || typeof listApi.getSnapshot !== 'function') return null;
         try {
           var snap = listApi.getSnapshot();
-          var items = (snap && snap.items) || [];
-          for (var i = 0; i < items.length; i++) {
-            if (items[i].sessionId === sessionId) return items[i].cwd || null;
+          // 运行时快照形状是 { ids, byId, current, ... }（dsh-client-runtime 的
+          // SessionListState）：byId 以 sessionId 为键，每条含
+          // { id, displayTitle, cwd?, ... }（projectList 里按 entry.cwd 是否存在投影）。
+          // 旧实现读 snap.items + items[i].sessionId —— 快照里根本没有 items 数组，
+          // 循环永远不执行，sessionCwd 恒为 null，按钮 payload 不带 cwd，唤醒便回退到
+          // dsh web 进程 cwd（从 home 启动时 = C:\Users\32115），mcode 就跑到了 home 目录。
+          var byId = (snap && snap.byId) || null;
+          var entry = byId ? byId[sessionId] : null;
+          if (entry && entry.cwd) return entry.cwd;
+          if (byId) {
+            // 兜底：按 id/sessionId 字段扫描（byId 的键即 sessionId，正常不会走到）
+            for (var k in byId) {
+              var it = byId[k];
+              if (it && (it.id === sessionId || it.sessionId === sessionId)) return it.cwd || null;
+            }
           }
         } catch (e) { /* swallow */ }
         return null;
