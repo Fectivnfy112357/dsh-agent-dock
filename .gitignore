@@ -4,3 +4,4 @@ node_modules/
 .mcode-handoff/
 coverage/
 .idea
+.git-commit-msg.tmp
