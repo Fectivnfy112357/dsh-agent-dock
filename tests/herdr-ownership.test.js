@@ -64,6 +64,8 @@ describe('herdr.js — 归属寻址（v1.1：paneName + cwd 双重匹配）', ()
       },
       'pane current': { pane: { pane_id: 'w2:p1' } },
       'pane split --pane w2:p1 --direction right --no-focus --cwd D:\\programming\\projects\\dsh_worlspace': { pane: { pane_id: 'w2:p3' } },
+      // v1.2 修订：herdr fork 0.8.0 的 pane split --cwd 已设置 pane shell cwd，mcode 启动直接继承，
+      // 不再需要 cd 拼接前缀（实测 `cd ; mcode` 会让 mcode 因 Start-Process 反而跑回 $HOME）
       'pane run w2:p3 mcode': { ok: true },
       'agent get w2:p3': { agent: { pane_id: 'w2:p3', agent: 'minimax', agent_status: 'working' } },
       'agent rename w2:p3 mcode': { ok: true },
