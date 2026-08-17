@@ -559,6 +559,7 @@ window.__ModuleLoader__.load({
           name: "conversation.session.header.actions",
           id: "agent-dock-wake",
           order: 60,
+          priority: -10,
           label: function () { return t("wake"); },
           locale: NS,
           inject: function (sessionId) {
@@ -570,8 +571,9 @@ window.__ModuleLoader__.load({
       ctx.slots.inject("conversation.details.tool", function () {
         return ctx.slots.register({
           name: "conversation.details.tool",
-          id: "agent-dock-terminal",
-          order: 60,
+          // single slot 已被 x6 等以 priority 0 占用（DSH dsh-client-ui-tool 默认 toolview）。
+          // 用更小的 priority 覆盖——slot 渲染规则"lowest renders"（slot/index.js:169-171）。
+          priority: -10,
           label: function () { return t("panelTitle"); },
           locale: NS,
           inject: function (sessionId) {
