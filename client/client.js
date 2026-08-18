@@ -380,22 +380,45 @@ window.__ModuleLoader__.load({
           fit = new mods.FitAddon();
           term.loadAddon(fit);
           term.open(containerRef.current);
-          // v0.4.12: 恢复 fit.fit() —— xterm 网格 rows 按容器高度算，撑满整个 details column
-          //（用户期望终端面板是大屏幕，mcode 内容是屏幕里的内容；v0.4.11 root div 黑色
-          // 背景覆盖任何'假终端空白'边界，所以视觉上整个 details column 黑色连贯）
-          try { fit.fit(); } catch (_) {}
+          // v0.4.14：如果 status.mine.viewportCols 有值（herdr pane viewport_cols），
+          // 用它设 term cols 数让字符位置跟 mcode pane 输出对齐（避免 mcode 按
+          // workspace viewport_cols 输出但 xterm 按 details column 宽度显示导致字符
+          // 错乱/竖向排列）。取 max(fitCols, viewportCols)：保证至少 fitCols 个
+          // 字符可读，但 mcode 输出更宽也按 viewportCols 渲染（字符宽度自动缩小）。
+          try {
+            var vp = status.mine && status.mine.viewportCols;
+            if (vp && vp > 0) {
+              var d = fit.proposeDimensions();
+              if (d) term.resize(Math.max(d.cols, vp), d.rows);
+              else fit.fit();
+            } else {
+              fit.fit();
+            }
+          } catch (_) {}
           // v0.4.3 修：DSH details column 展开动画第一帧 containerRef.current.clientWidth
           // ≈0，fitAddon 算出 cols=1 后 term 网格被定死在 1×N（每个字符单独一行）；
           // window.resize 不会冒泡 details 列内部尺寸变化，所以单纯依赖 window.resize
           // 无法在 details 列打开或拖拽 handle 改宽时重新 fit。
           // ResizeObserver 在 observe 后异步触发，覆盖展开动画第一帧 / 拖拽 handle /
           // 窗口 resize 全链路的容器尺寸变化，统一重新 fit。
-          // v0.4.12: 恢复 fit.fit()（按容器高度算 rows，撑满 details column）
-          ro = new ResizeObserver(function () { try { fit.fit(); } catch (_) {} });
+          // v0.4.14: ResizeObserver/window resize 用同样的 viewportCols 同步逻辑
+          function syncXterm() {
+            try {
+              var vp = status.mine && status.mine.viewportCols;
+              if (vp && vp > 0) {
+                var d = fit.proposeDimensions();
+                if (d) term.resize(Math.max(d.cols, vp), d.rows);
+                else fit.fit();
+              } else {
+                fit.fit();
+              }
+            } catch (_) {}
+          }
+          ro = new ResizeObserver(syncXterm);
           ro.observe(containerRef.current);
           termRef.current = term;
           fitRef.current = fit;
-          onResize = function () { try { fit.fit(); } catch (_) {} };
+          onResize = syncXterm;
           window.addEventListener("resize", onResize);
           // 输入转发：term.onData → POST /terminal/send
           term.onData(function (data) {
