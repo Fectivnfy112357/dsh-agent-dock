@@ -230,6 +230,8 @@ window.__ModuleLoader__.load({
       var closeDetails = props.closeDetails;
       var sessionCwd = useSessionCwd(sessionId);
       var cwd = sessionCwd;
+      // [DEBUG-a4f2] cwd 解析点：定位 cwd 是否为 null
+      try { console.log("[DEBUG-a4f2] TerminalPanelInner render", JSON.stringify({ sessionId: sessionId, passedCwd: props.cwd, sessionCwd: sessionCwd, cwd: cwd })); } catch (_) {}
       var xterm = useXterm();
       var useState = react.useState;
       var useEffect = react.useEffect;
@@ -249,6 +251,8 @@ window.__ModuleLoader__.load({
       useEffect(function () {
         var alive = true;
         function tick() {
+          // [DEBUG-a4f2] status fetch URL：cwd 是否为空决定服务端 expectCwd fallback 链
+          try { console.log("[DEBUG-a4f2] status fetch", cwd ? "with cwd=" + cwd : "without cwd (server will fallback to cfg.mcodeCwd/process.cwd)"); } catch (_) {}
           var url = "/agent-dock/status" + (cwd ? "?cwd=" + encodeURIComponent(cwd) : "");
           fetch(url, { cache: "no-store" })
             .then(function (r) { return r.json(); })
@@ -278,7 +282,9 @@ window.__ModuleLoader__.load({
 
       // 拉终端文本
       useEffect(function () {
-        if (!xterm.ready || !status.mine || !cwd) return;
+        // [DEBUG-a4f2] 轮询 useEffect 触发：看 xterm.ready / status.mine / cwd 三个条件哪个 false
+        try { console.log("[DEBUG-a4f2] poll useEffect run", JSON.stringify({ xtermReady: xterm.ready, hasMine: !!status.mine, mineState: status.mine && status.mine.state, minePane: status.mine && status.mine.pane, mineCwd: status.mine && status.mine.cwd, cwd: cwd, cfgPoll: cfgPoll })); } catch (_) {}
+        if (!xterm.ready || !status.mine || !cwd) { try { console.log("[DEBUG-a4f2] poll useEffect EARLY-RETURN"); } catch (_) {} return; }
         var alive = true;
         var timer = null;
         var pending = false;
@@ -294,12 +300,16 @@ window.__ModuleLoader__.load({
             .then(function (r) { return r.json(); })
             .then(function (body) {
               if (!alive) return;
-              if (body && body.ok && typeof body.text === "string" && body.text !== lastText) {
+              // [DEBUG-a4f2] poll fetch 响应：看 body.ok / text 长度 / lastText 比较结果 / termRef 是否就绪
+              try { console.log("[DEBUG-a4f2] poll response", JSON.stringify({ ok: !!(body && body.ok), textType: body && typeof body.text, textLen: body && body.text && body.text.length, textHead: body && body.text && body.text.substring(0, 60), lastTextLen: lastText && lastText.length, textChanged: body && body.text !== lastText, termRefExists: !!termRef.current })); } catch (_) {}
+              // v0.4.4 修：termRef 缺失时不缓存 lastText。xterm init 时机 bug（Fix 1 修）期间
+              // termRef.current 可能是 null，若仍把 body.text 写进 lastText，等 termRef 就绪后
+              // body.text === lastText → textChanged=false → 永远不再进入 write 分支。
+              // 修复：termRef.current 提升为主条件的一部分；lastText 仅在实际 write 后才赋值。
+              if (body && body.ok && typeof body.text === "string" && body.text !== lastText && termRef.current) {
+                termRef.current.reset();
+                termRef.current.write(body.text);
                 lastText = body.text;
-                if (termRef.current) {
-                  termRef.current.reset();
-                  termRef.current.write(body.text);
-                }
               }
             })
             .catch(function () { /* 静默：保留旧画面 */ })
@@ -314,51 +324,76 @@ window.__ModuleLoader__.load({
 
       // 初始化 xterm（主题跟随 DSH）
       useEffect(function () {
-        if (!xterm.ready || !containerRef.current) return;
-        var mods = xterm.term;
-        var term = new mods.Terminal({
-          cursorBlink: true,
-          fontFamily: 'ui-monospace, "Cascadia Code", Consolas, monospace',
-          fontSize: 13,
-          theme: {
-            background: theme.bg,
-            foreground: theme.fg,
-            cursor: theme.fg,
-            selectionBackground: theme.isDark ? "rgba(180,180,200,0.30)" : "rgba(40,60,140,0.25)"
-          },
-          convertEol: true,
-          scrollback: 4000,
-          disableStdin: false
-        });
-        var fit = new mods.FitAddon();
-        term.loadAddon(fit);
-        term.open(containerRef.current);
-        try { fit.fit(); } catch (_) {}
-        // v0.4.3 修：DSH details column 展开动画第一帧 containerRef.current.clientWidth
-        // ≈0，fitAddon 算出 cols=1 后 term 网格被定死在 1×N（每个字符单独一行）；
-        // window.resize 不会冒泡 details 列内部尺寸变化，所以单纯依赖 window.resize
-        // 无法在 details 列打开或拖拽 handle 改宽时重新 fit。
-        // ResizeObserver 在 observe 后异步触发，覆盖展开动画第一帧 / 拖拽 handle /
-        // 窗口 resize 全链路的容器尺寸变化，统一重新 fit。
-        var ro = new ResizeObserver(function () { try { fit.fit(); } catch (_) {} });
-        ro.observe(containerRef.current);
-        termRef.current = term;
-        fitRef.current = fit;
-        var onResize = function () { try { fit.fit(); } catch (_) {} };
-        window.addEventListener("resize", onResize);
-        // 输入转发：term.onData → POST /terminal/send
-        term.onData(function (data) {
-          if (!cwd) return;
-          fetch("/agent-dock/terminal/send", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ cwd: cwd, text: data })
-          }).catch(function () {});
-        });
+        // [DEBUG-a4f2] xterm init useEffect：触发时容器尺寸（fit 是否能算正确 cols）
+        try { console.log("[DEBUG-a4f2] xterm init useEffect", JSON.stringify({ xtermReady: xterm.ready, containerExists: !!containerRef.current, containerWidth: containerRef.current && containerRef.current.clientWidth, containerHeight: containerRef.current && containerRef.current.clientHeight })); } catch (_) {}
+        if (!xterm.ready) return;
+        // v0.4.4 修：xterm init 时机 bug。body 渲染为 containerRef div 的前提是
+        // cwd && status.mine && xterm.ready 三个都为真，但 xterm.ready 异步加载通常比
+        // status fetch 先完成——xterm.ready=true 触发本 useEffect 时 status.mine 还是 null，
+        // body 走 renderEmpty 分支、containerRef div 不挂载，containerRef.current 仍是 null。
+        // 早返回后 status.mine 回来让 body 切到 containerRef div，但 useEffect 依赖 [xterm.ready]
+        // 没变（true→true），不重跑，term 永远不创建，termRef.current 永远是 null。
+        // 修复：依赖保持 [xterm.ready]，但 init 逻辑挪进 attempt() 用 raf 轮询等到
+        // containerRef.current 挂载后再创建 term。term/fit/ro/onResize 提到闭包外便于
+        // cleanup 释放；attempt() 内部幂等（termRef.current 非空直接 return）。
+        var cancelled = false;
+        var raf = null;
+        var term = null;
+        var fit = null;
+        var ro = null;
+        var onResize = null;
+        function attempt() {
+          if (cancelled) return;
+          if (!containerRef.current) { raf = requestAnimationFrame(attempt); return; }
+          if (termRef.current) return;
+          var mods = xterm.term;
+          term = new mods.Terminal({
+            cursorBlink: true,
+            fontFamily: 'ui-monospace, "Cascadia Code", Consolas, monospace',
+            fontSize: 13,
+            theme: {
+              background: theme.bg,
+              foreground: theme.fg,
+              cursor: theme.fg,
+              selectionBackground: theme.isDark ? "rgba(180,180,200,0.30)" : "rgba(40,60,140,0.25)"
+            },
+            convertEol: true,
+            scrollback: 4000,
+            disableStdin: false
+          });
+          fit = new mods.FitAddon();
+          term.loadAddon(fit);
+          term.open(containerRef.current);
+          try { fit.fit(); } catch (_) {}
+          // v0.4.3 修：DSH details column 展开动画第一帧 containerRef.current.clientWidth
+          // ≈0，fitAddon 算出 cols=1 后 term 网格被定死在 1×N（每个字符单独一行）；
+          // window.resize 不会冒泡 details 列内部尺寸变化，所以单纯依赖 window.resize
+          // 无法在 details 列打开或拖拽 handle 改宽时重新 fit。
+          // ResizeObserver 在 observe 后异步触发，覆盖展开动画第一帧 / 拖拽 handle /
+          // 窗口 resize 全链路的容器尺寸变化，统一重新 fit。
+          ro = new ResizeObserver(function () { try { fit.fit(); } catch (_) {} });
+          ro.observe(containerRef.current);
+          termRef.current = term;
+          fitRef.current = fit;
+          onResize = function () { try { fit.fit(); } catch (_) {} };
+          window.addEventListener("resize", onResize);
+          // 输入转发：term.onData → POST /terminal/send
+          term.onData(function (data) {
+            if (!cwd) return;
+            fetch("/agent-dock/terminal/send", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ cwd: cwd, text: data })
+            }).catch(function () {});
+          });
+        }
+        attempt();
         return function () {
-          ro.disconnect();
-          window.removeEventListener("resize", onResize);
-          try { term.dispose(); } catch (_) {}
+          cancelled = true;
+          if (raf) cancelAnimationFrame(raf);
+          if (ro) ro.disconnect();
+          if (onResize) window.removeEventListener("resize", onResize);
+          if (term) { try { term.dispose(); } catch (_) {} }
           termRef.current = null;
           fitRef.current = null;
         };
