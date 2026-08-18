@@ -1,26 +1,17 @@
 /**
  * dsh-agent-dock — WebUI 客户端（单文件，__ModuleLoader__ 格式，免构建）。
- * 依赖：react / react-dom / xterm CDN（module table 提供 react + react-dom）。
- * 设计（v0.3.0 终端浮层重写）：
- *   - 不再挂 conversation.details.tool：那个 slot 只在选中 tool call 时渲染（详见
- *     DSH DetailsPanel.tsx），与我们的"唤醒即看终端"诉求不匹配。
- *   - 也不依赖 layout.openDetails()/closeDetails()。
- *   - 改为：会话头部 actions slot 仍是挂载点（id='agent-dock-wake'），
- *     但 AgentDockWidget 内部用 React state 管理 dockOpen，并通过
- *     react-dom.createPortal 把 TerminalDockPanel 渲染到 document.body 下
- *     一个独占 div，position: fixed 钉在屏幕右侧，z-index 高于 DSH 内容。
- *   - 这样唤醒按钮所在的 slot 是常驻的（list, scope=session, 每会话渲染一次），
- *     浮层随 DockHost 一起挂载/卸载，与 DSH 的 selection/chat state 完全解耦。
- * 交互：
- *   - 未运行：头部"唤醒 mcode"按钮（绿），点击 → POST /agent-dock/wake（携带
- *     当前会话 cwd）→ setDockOpen(true) 打开右侧浮层。
- *   - 运行中：徽章（idle/working/blocked/done 状态色），点击 → 幂等 wake + 打开浮层；
- *     再点一次则关闭浮层。
- *   - 浮层：xterm.js 渲染 herdr agent read --format ansi 的实时 VT 序列；
+ * 依赖：仅 react（module table 提供）；服务：slots + locale + sessions + layout（dsh-client-runtime）。
+ * 交互（DESIGN Q2/Q12 修订 + v1.3 终端面板）：
+ *   - 未运行：会话头部按钮"唤醒 mcode"（绿），点击 POST /agent-dock/wake（携带当前会话 cwd）；
+ *     唤醒后会自动调 layout.openDetails() 打开右侧终端面板。
+ *   - 运行中（归属命中）：可点击徽章（idle 灰 / working 琥珀 / blocked 红 / done 绿 / 离线），
+ *     点击 = 幂等 wake + 打开终端面板聚焦该 pane（v1.1，DESIGN Q12 修订）；悬停展示 pane 名与工作目录。
+ *   - 右侧终端面板（v1.4）：注册到 conversation.details.tool slot，xterm.js 渲染 herdr
+ *     agent read --source recent --format ansi 的实时 VT 序列（颜色/框线/光标全保留）；
  *     输入经 POST /agent-dock/terminal/send 转发到 pane send-text / agent send-keys。
- *   - 轮询 /agent-dock/status?cwd=...，间隔取服务端配置 pollIntervalMs（默认 2s）；
- *     终端文本轮询 /agent-dock/terminal/text，间隔取 terminalPollMs（默认 1500ms）。
- *   - cwd 取自当前会话（v1.3：ctx.sessions.list.getSnapshot().byId[sessionId].cwd）。
+ *     自动轮询间隔取服务端配置 terminalPollMs（默认 1500ms）。
+ *   - 轮询 /agent-dock/status?cwd=...，间隔取服务端配置 pollIntervalMs（默认 2s）。
+ *   - cwd 取自当前会话（v1.3：ctx.sessions.list.getSnapshot().byId[sessionId].cwd。
  * 扩展位：按钮/徽章与 provider 无关；新增 provider 时只需扩展状态映射文案。
  */
 window.__ModuleLoader__.load({
@@ -30,7 +21,6 @@ window.__ModuleLoader__.load({
     var exports = module.exports;
     Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
     var react = require("react");
-    var reactDom = require("react-dom");
 
     var NS = "dsh-agent-dock";
     // 由 apply(ctx) 在 host 调用时填入；factory 阶段 ctx 尚未构造，无法直接捕获到闭包。
@@ -53,8 +43,9 @@ window.__ModuleLoader__.load({
       panelLoading: "正在加载终端…",
       panelSend: "发送",
       panelCmdPlaceholder: "向 mcode 发送文本（Enter 提交，pane send-text）",
-      panelOpen: "打开终端浮层",
-      panelClose: "关闭终端浮层",
+      panelKeysLabel: "键",
+      panelOpen: "打开终端面板",
+      panelClose: "关闭面板",
     };
     var en = {
       wake: "Wake mcode",
@@ -67,8 +58,9 @@ window.__ModuleLoader__.load({
       panelLoading: "Loading terminal…",
       panelSend: "Send",
       panelCmdPlaceholder: "Send text to mcode (Enter to submit, pane send-text)",
-      panelOpen: "Open terminal dock",
-      panelClose: "Close terminal dock",
+      panelKeysLabel: "Keys",
+      panelOpen: "Open terminal panel",
+      panelClose: "Close panel",
     };
 
     // ===== xterm.js / FitAddon 动态加载（CDN） =====
@@ -134,16 +126,24 @@ window.__ModuleLoader__.load({
     function useSessionCwd(sessionId) {
       var useState = react.useState;
       var useEffect = react.useEffect;
+      // listApi 由 apply(ctx) 时挂到 _ctxRef.current.sessions.list；factory 阶段 _ctxRef.current=null。
       var ctx = _ctxRef.current;
       var listApi = ctx && ctx.sessions && ctx.sessions.list;
       function readCwd() {
         if (!listApi || typeof listApi.getSnapshot !== 'function') return null;
         try {
           var snap = listApi.getSnapshot();
+          // 运行时快照形状是 { ids, byId, current, ... }（dsh-client-runtime 的
+          // SessionListState）：byId 以 sessionId 为键，每条含
+          // { id, displayTitle, cwd?, ... }（projectList 里按 entry.cwd 是否存在投影）。
+          // 旧实现读 snap.items + items[i].sessionId —— 快照里根本没有 items 数组，
+          // 循环永远不执行，sessionCwd 恒为 null，按钮 payload 不带 cwd，唤醒便回退到
+          // dsh web 进程 cwd（从 home 启动时 = C:\Users\32115），mcode 就跑到了 home 目录。
           var byId = (snap && snap.byId) || null;
           var entry = byId ? byId[sessionId] : null;
           if (entry && entry.cwd) return entry.cwd;
           if (byId) {
+            // 兜底：按 id/sessionId 字段扫描（byId 的键即 sessionId，正常不会走到）
             for (var k in byId) {
               var it = byId[k];
               if (it && (it.id === sessionId || it.sessionId === sessionId)) return it.cwd || null;
@@ -156,9 +156,11 @@ window.__ModuleLoader__.load({
       var cwd = pair[0];
       var setCwd = pair[1];
       useEffect(function () {
+        // 组件挂载时 ctx 可能尚未构造（apply 比 React 树先；如有 race 这里重读一次）
         var liveList = (_ctxRef.current && _ctxRef.current.sessions && _ctxRef.current.sessions.list) || listApi;
         if (!liveList || typeof liveList.subscribe !== 'function' || !sessionId) return;
         var unsub = liveList.subscribe(function () { setCwd(readCwd()); });
+        // 立即重读一次，覆盖 race 期间 ctx 后到的情形
         setCwd(readCwd());
         return unsub;
       }, [sessionId]);
@@ -166,7 +168,7 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 异步加载 xterm 的 hook；返回 { ready, error, term }。
+     * 异步加载 xterm 的 hook；返回 { ready, error }。
      */
     function useXterm() {
       var useState = react.useState;
@@ -189,35 +191,27 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 终端浮层组件（v0.3.0）：通过 React Portal 渲染到 document.body 下的
-     * 独占 div，position: fixed 钉在屏幕右侧，与 DSH 的 selection/chat state
-     * 完全解耦（详见模块头注释）。
+     * 终端面板组件（v1.4）：注册到 conversation.details.tool slot。
      * - 数据：每 terminalPollMs ms 拉 POST /agent-dock/terminal/text，--format ansi
      * - 输出：term.write(ansi)（xterm.js 自带 ANSI 解析，渲染 mcode 完整 VT）
      * - 输入：term.onData → POST /agent-dock/terminal/send
-     * - 关闭：props.onClose（由 DockHost 注入）
+     * - closeDetails 由 details slot 的 inject 提供（layout.closeDetails）。
      */
-    function TerminalDockPanel(props) {
+    function TerminalView(props) {
       var t = props.t;
       var sessionId = props.sessionId;
-      var onClose = props.onClose;
       try {
-        return TerminalDockPanelInner(props);
+        return TerminalViewInner(props);
       } catch (err) {
+        // 任何渲染错误都落到这里——把错误原文显示出来，避免整个 panel 变空白
         return react.createElement("div", {
-          style: { padding: 0, color: "#e5584b", fontFamily: "ui-monospace, monospace", fontSize: 12, whiteSpace: "pre-wrap", background: "#0e0e10", position: "fixed", top: 0, right: 0, bottom: 0, width: "min(560px, 60vw)", zIndex: 2147483600, boxShadow: "-4px 0 16px rgba(0,0,0,0.5)", display: "flex", flexDirection: "column" }
-        }, react.createElement("div", { style: { display: "flex", justifyContent: "space-between", padding: "8px 12px", borderBottom: "1px solid #2a2a2e" } },
-          react.createElement("strong", null, t("panelTitle")),
-          react.createElement("button", { onClick: onClose, style: { background: "transparent", border: "1px solid #3a3a40", borderRadius: 4, color: "#cfd2d6", padding: "2px 8px", cursor: "pointer", fontSize: 11 } }, "×")
-        ),
-        react.createElement("pre", { style: { padding: 16, margin: 0, whiteSpace: "pre-wrap", flex: 1, overflow: "auto" } }, "dsh-agent-dock TerminalDockPanel render error:\n\n" + String(err && err.stack || err) + "\n\nsessionId=" + sessionId)
-        );
+          style: { padding: 12, color: "#e5584b", fontFamily: "ui-monospace, monospace", fontSize: 12, whiteSpace: "pre-wrap", background: "#0e0e10", minHeight: 200 }
+        }, "dsh-agent-dock TerminalView render error:\n\n" + String(err && err.stack || err) + "\n\nsessionId=" + sessionId);
       }
     }
-    function TerminalDockPanelInner(props) {
+    function TerminalViewInner(props) {
       var t = props.t;
       var sessionId = props.sessionId;
-      var onClose = props.onClose;
       var sessionCwd = useSessionCwd(sessionId);
       var cwd = sessionCwd;
       var xterm = useXterm();
@@ -231,6 +225,7 @@ window.__ModuleLoader__.load({
       var containerRef = useRef(null);
       var termRef = useRef(null);
       var fitRef = useRef(null);
+      var pollRef = useRef(1500);
 
       // 拉 status 拿 mine.cwd / terminalPollMs
       useEffect(function () {
@@ -241,6 +236,7 @@ window.__ModuleLoader__.load({
             .then(function (r) { return r.json(); })
             .then(function (body) {
               if (!alive) return;
+              if (body.pollIntervalMs) pollRef.current = body.pollIntervalMs;
               setStatus({ mine: body.mine || null, loading: false });
             })
             .catch(function () { if (alive) setStatus({ mine: null, loading: false }); });
@@ -249,6 +245,7 @@ window.__ModuleLoader__.load({
         return function () { alive = false; };
       }, [cwd]);
 
+      // 拉 status 的 terminalPollMs（默认 1500）
       var cfgPoll = (status.mine && status.mine.terminalPollMs) || 1500;
 
       // 拉终端文本
@@ -258,8 +255,8 @@ window.__ModuleLoader__.load({
         var timer = null;
         var pending = false;
         var lastText = null;
-        function poll() {
-          if (!alive || pending) { timer = setTimeout(poll, cfgPoll); return; }
+        function tick() {
+          if (!alive || pending) { timer = setTimeout(tick, cfgPoll); return; }
           pending = true;
           fetch("/agent-dock/terminal/text", {
             method: "POST",
@@ -280,10 +277,10 @@ window.__ModuleLoader__.load({
             .catch(function () { /* 静默：保留旧画面 */ })
             .then(function () {
               pending = false;
-              if (alive) timer = setTimeout(poll, cfgPoll);
+              if (alive) timer = setTimeout(tick, cfgPoll);
             });
         }
-        timer = setTimeout(poll, cfgPoll);
+        timer = setTimeout(tick, cfgPoll);
         return function () { alive = false; if (timer) clearTimeout(timer); };
       }, [xterm.ready, status.mine, cwd, cfgPoll]);
 
@@ -342,40 +339,61 @@ window.__ModuleLoader__.load({
         }).catch(function () {});
       }, [cwd]);
 
+      var renderEmpty = function () {
+        return react.createElement("div", {
+          style: { padding: 16, color: "#9aa0a6", fontSize: 13 }
+        }, t("panelEmpty"));
+      };
+      var renderLoading = function () {
+        return react.createElement("div", {
+          style: { padding: 16, color: "#9aa0a6", fontSize: 13 }
+        }, t("panelLoading"));
+      };
+      var renderError = function () {
+        return react.createElement("div", {
+          style: { padding: 16, color: "#e5584b", fontSize: 12, fontFamily: "ui-monospace, monospace", whiteSpace: "pre-wrap" }
+        }, "xterm.js load failed: " + xterm.error + "\n\n请检查网络（CDN：cdn.jsdelivr.net / unpkg.com），或在内网部署时把 xterm.js 与 xterm-addon-fit 安装到本地 module table。");
+      };
+
       var diagLine = (function () {
         var parts = [];
-        parts.push("v0.3.0");
+        parts.push("v0.2.1");
         parts.push("cwd=" + (cwd || "null"));
         if (status.mine) parts.push("mine=" + status.mine.state + "@" + status.mine.pane);
         if (xterm.ready) parts.push("xterm=ok");
         else if (xterm.error) parts.push("xterm=err");
         return parts.join(" · ");
       })();
-
       var headerBar = react.createElement("div", {
         style: {
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-          padding: "8px 12px", color: "#cfd2d6", fontSize: 12,
-          borderBottom: "1px solid #2a2a2e", flexShrink: 0
+          display: "flex", alignItems: "center", justifyContent: "space-between", flexDirection: "column",
+          padding: "8px 12px", color: "#cfd2d6", fontSize: 12, gap: 4,
+          borderBottom: "1px solid #2a2a2e", alignItems: "flex-start"
         }
       },
-        react.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 2, minWidth: 0 } },
-          react.createElement("strong", null, t("panelTitle") + " · " + (status.mine && status.mine.cwd ? status.mine.cwd : (cwd || "—"))),
-          react.createElement("span", { style: { fontSize: 10, color: "#7f858c", wordBreak: "break-all" } }, diagLine)
+        react.createElement("div", { style: { display: "flex", justifyContent: "space-between", width: "100%" } },
+          react.createElement("span", null, t("panelTitle") + " · " + (status.mine && status.mine.cwd ? status.mine.cwd : (cwd || "—"))),
+          react.createElement("button", {
+            onClick: function () { if (props.closeDetails) props.closeDetails(); },
+            title: t("panelClose"),
+            style: {
+              background: "transparent", border: "1px solid #3a3a40", borderRadius: 4,
+              color: "#cfd2d6", padding: "2px 8px", cursor: "pointer", fontSize: 11
+            }
+          }, "×")
         ),
+        react.createElement("span", { style: { fontSize: 10, color: "#7f858c", wordBreak: "break-all" } }, diagLine)
+      );
         react.createElement("button", {
-          onClick: onClose,
+          onClick: function () { if (props.closeDetails) props.closeDetails(); },
           title: t("panelClose"),
-          "aria-label": t("panelClose"),
           style: {
             background: "transparent", border: "1px solid #3a3a40", borderRadius: 4,
-            color: "#cfd2d6", padding: "2px 8px", cursor: "pointer", fontSize: 14,
-            lineHeight: 1
+            color: "#cfd2d6", padding: "2px 8px", cursor: "pointer", fontSize: 11
           }
-        }, "×")
-      );
+        }, "×"));
 
-      var inputRow = react.createElement("div", { style: { display: "flex", gap: 6, padding: 8, borderTop: "1px solid #2a2a2e", flexShrink: 0 } },
+      var inputRow = react.createElement("div", { style: { display: "flex", gap: 6, padding: 8, borderTop: "1px solid #2a2a2e" } },
         react.createElement("input", {
           placeholder: t("panelCmdPlaceholder"),
           style: {
@@ -383,14 +401,14 @@ window.__ModuleLoader__.load({
             background: "#1c1c1f", color: "#e6e6e6", fontSize: 12,
             fontFamily: "ui-monospace, Consolas, monospace"
           },
-          onKeyDown: function (e) {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              var v = e.currentTarget.value;
-              sendText(v + "\n");
-              e.currentTarget.value = "";
-            }
+        onKeyDown: function (e) {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            var v = e.currentTarget.value;
+            sendText(v + "\n");
+            e.currentTarget.value = "";
           }
+        }
         }),
         react.createElement("button", {
           onClick: function () {
@@ -405,7 +423,7 @@ window.__ModuleLoader__.load({
       );
 
       var keyRow = react.createElement("div", {
-        style: { display: "flex", gap: 4, padding: "0 8px 8px", flexWrap: "wrap", flexShrink: 0 }
+        style: { display: "flex", gap: 4, padding: "0 8px 8px", flexWrap: "wrap" }
       }, ["esc", "enter", "tab", "shift+tab", "ctrl+c", "ctrl+l", "up", "down"].map(function (k) {
         return react.createElement("button", {
           key: k,
@@ -418,18 +436,6 @@ window.__ModuleLoader__.load({
         }, k);
       }));
 
-      var renderEmpty = function () {
-        return react.createElement("div", { style: { padding: 16, color: "#9aa0a6", fontSize: 13 } }, t("panelEmpty"));
-      };
-      var renderLoading = function () {
-        return react.createElement("div", { style: { padding: 16, color: "#9aa0a6", fontSize: 13 } }, t("panelLoading"));
-      };
-      var renderError = function () {
-        return react.createElement("div", {
-          style: { padding: 16, color: "#e5584b", fontSize: 12, fontFamily: "ui-monospace, monospace", whiteSpace: "pre-wrap" }
-        }, "xterm.js load failed: " + xterm.error + "\n\n请检查网络（CDN：cdn.jsdelivr.net / unpkg.com），或在内网部署时把 xterm.js 与 xterm-addon-fit 安装到本地 module table。");
-      };
-
       var body;
       if (!cwd) body = renderLoading();
       else if (!status.mine) body = renderEmpty();
@@ -438,37 +444,23 @@ window.__ModuleLoader__.load({
       else body = react.createElement("div", { ref: containerRef, style: { flex: 1, minHeight: 0, padding: 4 } });
 
       return react.createElement("div", {
-        "data-dsh-agent-dock": "panel",
         style: {
-          position: "fixed",
-          top: 0,
-          right: 0,
-          bottom: 0,
-          width: "min(560px, 60vw)",
-          background: "#0e0e10",
-          color: "#e6e6e6",
+          display: "flex", flexDirection: "column",
+          width: "100%", height: "100%", minHeight: 300,
+          background: "#0e0e10", color: "#e6e6e6",
           fontFamily: "ui-monospace, Consolas, monospace",
-          boxShadow: "-4px 0 16px rgba(0,0,0,0.5)",
-          display: "flex",
-          flexDirection: "column",
-          zIndex: 2147483600,
           boxSizing: "border-box"
         }
       }, headerBar, body, inputRow, keyRow);
     }
 
-    /**
-     * DockHost：actions slot 条目的顶层组件。
-     * - 渲染唤醒按钮 / 状态徽章（v1.1 旧逻辑）
-     * - 维护 dockOpen 状态；唤醒/点徽章后打开浮层；运行中再点徽章则关闭浮层
-     * - 浮层通过 React Portal 渲染到 document.body 下的独占 div，
-     *   position: fixed 钉在屏幕右侧，与 DSH selection 完全解耦。
-     */
+    /** 组件：唤醒按钮 / 状态徽章二态一体（徽章可点击 = 幂等 wake + 聚焦 + 打开终端面板）。 */
     function AgentDockWidget(props) {
       var t = props.t;
       var sessionId = props.sessionId;
       var passedCwd = props.cwd;
       var sessionCwd = useSessionCwd(sessionId);
+      // 优先级：显式 props.cwd > sessions service 实时取的 sessionCwd > null
       var cwd = passedCwd || sessionCwd || null;
       var useState = react.useState;
       var useEffect = react.useEffect;
@@ -479,26 +471,7 @@ window.__ModuleLoader__.load({
       var wkSt = useState(false);
       var waking = wkSt[0];
       var setWaking = wkSt[1];
-      var openSt = useState(false);
-      var dockOpen = openSt[0];
-      var setDockOpen = openSt[1];
       var pollRef = useRef(2000);
-
-      // 创建一个独占的 portal 容器挂在 document.body 下，浮层从此处渲染。
-      // portal 让 React 树更干净，避免被父级 transform/filter 创建的
-      // containing block 影响 fixed 参考系。
-      var portalHostRef = useRef(null);
-      if (portalHostRef.current === null && typeof document !== "undefined") {
-        var existing = document.getElementById("dsh-agent-dock-portal-host");
-        if (!existing) {
-          existing = document.createElement("div");
-          existing.id = "dsh-agent-dock-portal-host";
-          // portal host 自身不占布局，不抢事件；浮层（TerminalDockPanel）才是真正的 fixed 容器
-          existing.style.cssText = "position:absolute;top:0;left:0;width:0;height:0;overflow:visible;pointer-events:none;z-index:2147483600;";
-          document.body.appendChild(existing);
-        }
-        portalHostRef.current = existing;
-      }
 
       useEffect(function () {
         var alive = true;
@@ -522,14 +495,22 @@ window.__ModuleLoader__.load({
         return function () { alive = false; if (timer) clearTimeout(timer); };
       }, [cwd]);
 
+      function openPanel() {
+        var ctx = _ctxRef.current;
+        if (ctx && ctx.layout && typeof ctx.layout.openDetails === "function") {
+          try { ctx.layout.openDetails(); } catch (_) {}
+        }
+      }
+
       async function onWake() {
         if (waking) return;
         setWaking(true);
         try {
           var payload = JSON.stringify(cwd ? { cwd: cwd } : {});
           await fetch("/agent-dock/wake", { method: "POST", headers: { "content-type": "application/json" }, body: payload });
+          // 唤醒后自动弹出右侧终端面板
+          openPanel();
         } catch (err) { /* 轮询会反映状态 */ }
-        setDockOpen(true);
         setTimeout(function () { setWaking(false); }, 30000);
       }
 
@@ -569,9 +550,10 @@ window.__ModuleLoader__.load({
         var badgeTitle = (state.mine.name || state.mine.pane) + " · " + meta.label
           + (state.mine.cwd ? " · " + state.mine.cwd : "")
           + (state.mine.workspace ? " · ws " + state.mine.workspace : "")
-          + " — 点击" + (dockOpen ? "关闭" : "打开") + "终端浮层";
+          + " — 点击打开终端面板";
+        // 徽章可点击 = 打开终端面板（同时唤醒 — 幂等，已存在则聚焦）
         return react.createElement("button", {
-          onClick: function () { if (dockOpen) setDockOpen(false); else onWake(); },
+          onClick: function () { openPanel(); onWake(); },
           disabled: !!waking,
           className: "agent-dock-badge",
           style: Object.assign({}, baseStyle, { borderColor: meta.color, color: meta.color }),
@@ -596,45 +578,53 @@ window.__ModuleLoader__.load({
         style.textContent = ".agent-dock-pill:hover{filter:brightness(1.1)}.agent-dock-pill:disabled{opacity:.6;cursor:default}";
         document.head.appendChild(style);
       })();
-
-      var pill = react.createElement("span", { className: "agent-dock-pill" }, renderContent());
-
-      // 浮层：通过 React Portal 渲染到 body 下的独占 div，与 DSH selection 无关。
-      var portalHost = portalHostRef.current;
-      var dockNode = (dockOpen && portalHost)
-        ? reactDom.createPortal(
-            react.createElement(TerminalDockPanel, {
-              t: t,
-              sessionId: sessionId,
-              onClose: function () { setDockOpen(false); }
-            }),
-            portalHost
-          )
-        : null;
-
-      return react.createElement(react.Fragment, null, pill, dockNode);
+      return react.createElement("span", { className: "agent-dock-pill" }, renderContent());
     }
 
-    var inject = ["slots", "locale", "sessions"];
+    var inject = ["slots", "locale", "sessions", "layout"];
 
     function apply(ctx) {
+      // v1.2：将 ctx 暴露给组件实例化的闭包（factory 阶段 ctx 尚未构造，apply 时回填）。
       _ctxRef.current = ctx;
       ctx.effect(function () { return ctx.locale.register(NS, { zh: zh, en: en }); }, "dsh-agent-dock: dictionaries");
       var t = ctx.locale.bind(NS);
-      // 会话头部 actions slot：唯一注入点（list 类型，每会话渲染一次，常驻）。
-      // 终端浮层通过同一组件内部的 React Portal 渲染到 document.body，
-      // 不再依赖 conversation.details.tool（详见模块头注释）。
+      // 1) 唤醒按钮 / 状态徽章：会话头部 actions slot（与之前一致）
       ctx.slots.inject("conversation.session.header.actions", function () {
         return ctx.slots.register({
           name: "conversation.session.header.actions",
           id: "agent-dock-wake",
           order: 60,
+          priority: -10,
           label: function () { return t("wake"); },
           locale: NS,
           inject: function (sessionId) {
             return { t: t, sessionId: sessionId, cwd: null };
           }
         }, function (props) { return react.createElement(AgentDockWidget, { t: props.t, sessionId: props.sessionId, cwd: props.cwd }); });
+      });
+      // 2) 终端面板：注册到 conversation.details.tool slot（v1.4，DSH conversation 子槽 single）
+      ctx.slots.inject("conversation.details.tool", function () {
+        return ctx.slots.register({
+          name: "conversation.details.tool",
+          // single slot 已被 x6 等以 priority 0 占用（DSH dsh-client-ui-tool 默认 toolview）。
+          // 用更小的 priority 覆盖——slot 渲染规则"lowest renders"（slot/index.js:169-171）。
+          priority: -10,
+          label: function () { return t("panelTitle"); },
+          locale: NS,
+          inject: function (sessionId) {
+            // inject 返回 closeDetails（details 面板的 close 入口）—— 按 DSH details slot 的 inject 约定
+            return {
+              t: t,
+              sessionId: sessionId,
+              closeDetails: function () {
+                try {
+                  var c = _ctxRef.current;
+                  if (c && c.layout && typeof c.layout.closeDetails === "function") c.layout.closeDetails();
+                } catch (_) {}
+              }
+            };
+          }
+        }, function (props) { return react.createElement(TerminalView, { t: props.t, sessionId: props.sessionId, closeDetails: props.closeDetails }); });
       });
     }
 
