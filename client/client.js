@@ -551,6 +551,13 @@ window.__ModuleLoader__.load({
       var t = props.t;
       var sessionId = props.sessionId;
       var passedCwd = props.cwd;
+      // layout 与 layoutStore 由 slot register options.inject 注入到 props（v0.4.1 修）：
+      // cordis 在 widget 内 ctx.layout 反射访问时要求 layout 出现在 exports.inject 数组里，
+      // 否则抛 "cannot get property layout without inject"，连带整个 slot 列表被 React
+      // error boundary 接住——表现为整列按钮消失。layout 已声明为 inject，详见 exports.inject。
+      // 这里仍走 props 路径，避免组件内反射 ctx 带来的运行时依赖，便于未来 cordis 行为变动。
+      var layout = props.layout || null;
+      var layoutStore = props.layoutStore || (layout && layout.store) || null;
       var sessionCwd = useSessionCwd(sessionId);
       var cwd = passedCwd || sessionCwd || null;
       var useState = react.useState;
@@ -567,12 +574,9 @@ window.__ModuleLoader__.load({
       var setDetailsOpen = openSt[1];
       var pollRef = useRef(2000);
 
-      // 订阅 layout store（_ctxRef.current.layout.store 不是 contract 一部分，
-      // 用 _ctxRef 反射 layout 实例：layout.closeDetails/openDetails 也会同步状态。
-      // 如果 ctx.layout.store 不存在则跳过——按钮仍按 onWake/onClose 互斥切换）。
+      // 订阅 layout store：DSH 的 × / 拖拽关闭详情列时按钮 toggle 视觉跟着走。
       useEffect(function () {
-        var ctx = _ctxRef.current;
-        var store = ctx && ctx.layout && ctx.layout.store;
+        var store = layoutStore;
         if (!store || typeof store.subscribe !== "function") return;
         var apply = function () {
           try {
@@ -584,7 +588,7 @@ window.__ModuleLoader__.load({
         var unsub = store.subscribe(apply);
         apply();
         return unsub;
-      }, []);
+      }, [layoutStore]);
 
       useEffect(function () {
         var alive = true;
@@ -609,15 +613,13 @@ window.__ModuleLoader__.load({
       }, [cwd]);
 
       function openPanel() {
-        var ctx = _ctxRef.current;
-        if (ctx && ctx.layout && typeof ctx.layout.openDetails === "function") {
-          try { ctx.layout.openDetails(); } catch (_) {}
+        if (layout && typeof layout.openDetails === "function") {
+          try { layout.openDetails(); } catch (_) {}
         }
       }
       function closePanel() {
-        var ctx = _ctxRef.current;
-        if (ctx && ctx.layout && typeof ctx.layout.closeDetails === "function") {
-          try { ctx.layout.closeDetails(); } catch (_) {}
+        if (layout && typeof layout.closeDetails === "function") {
+          try { layout.closeDetails(); } catch (_) {}
         }
       }
 
@@ -704,7 +706,12 @@ window.__ModuleLoader__.load({
       return react.createElement("span", { className: "agent-dock-pill" }, renderContent());
     }
 
-    var inject = ["slots", "locale", "sessions"];
+    // cordis 的 inject 数组声明本 bundle 运行时需要的 ctx 服务。cordis 会在该服务
+    // 就绪前阻止 entry 创建，并要求 widget 内通过 ctx.X 反射访问时 X 必须出现在这里
+    // （否则抛出 "cannot get property X without inject"，连带 slot 渲染失败——
+    // React error boundary 会把整个 slot 列表接住，表现为整列按钮不见，v0.4.0 bug）。
+    // layout 由 ui-layout 提供，是本插件终端面板开关的核心依赖，必须声明。
+    var inject = ["slots", "locale", "sessions", "layout"];
 
     function apply(ctx) {
       _ctxRef.current = ctx;
@@ -718,10 +725,21 @@ window.__ModuleLoader__.load({
           order: 60,
           label: function () { return t("wake"); },
           locale: NS,
+          // v0.4.1 修：把 layout 与 layoutStore 通过 props 注入 widget，避免组件内
+          // ctx.X 反射访问 layout（layout 未声明在 exports.inject 时 cordis 抛
+          // "cannot get property layout without inject"，连带 slot 列表被 React
+          // error boundary 接住，整个 actions slot 按钮消失）。
           inject: function (sessionId) {
-            return { t: t, sessionId: sessionId, cwd: null };
+            var layout = ctx.layout || null;
+            return {
+              t: t,
+              sessionId: sessionId,
+              cwd: null,
+              layout: layout,
+              layoutStore: layout && layout.store ? layout.store : null
+            };
           }
-        }, function (props) { return react.createElement(AgentDockWidget, { t: props.t, sessionId: props.sessionId, cwd: props.cwd }); });
+        }, function (props) { return React.createElement(AgentDockWidget, { t: props.t, sessionId: props.sessionId, cwd: props.cwd, layout: props.layout, layoutStore: props.layoutStore }); });
       });
       // 2) 终端面板：注册到 'details' slot（v0.4.0），priority -10 覆盖 ui-conversation
       // 默认注册的 DetailsPanel。DSH AppFrame 在右侧 detailsCol 内渲染此组件——
@@ -733,19 +751,21 @@ window.__ModuleLoader__.load({
           priority: -10,
           label: function () { return t("panelTitle"); },
           locale: NS,
+          // 同 v0.4.1 修：closeDetails 直接捕获 ctx.layout（apply 作用域，cordis 已
+          // 确保 layout 服务就绪；layout 已声明在 exports.inject 数组里，无 getter 抛错风险）。
           inject: function (sessionId) {
+            var layout = ctx.layout || null;
             return {
               t: t,
               sessionId: sessionId,
               closeDetails: function () {
-                var c = _ctxRef.current;
-                if (c && c.layout && typeof c.layout.closeDetails === "function") {
-                  try { c.layout.closeDetails(); } catch (_) {}
+                if (layout && typeof layout.closeDetails === "function") {
+                  try { layout.closeDetails(); } catch (_) {}
                 }
               }
             };
           }
-        }, function (props) { return react.createElement(TerminalPanelForDetails, { t: props.t, sessionId: props.sessionId, closeDetails: props.closeDetails }); });
+        }, function (props) { return React.createElement(TerminalPanelForDetails, { t: props.t, sessionId: props.sessionId, closeDetails: props.closeDetails }); });
       });
     }
 
