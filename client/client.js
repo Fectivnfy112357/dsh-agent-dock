@@ -334,6 +334,14 @@ window.__ModuleLoader__.load({
         term.loadAddon(fit);
         term.open(containerRef.current);
         try { fit.fit(); } catch (_) {}
+        // v0.4.3 修：DSH details column 展开动画第一帧 containerRef.current.clientWidth
+        // ≈0，fitAddon 算出 cols=1 后 term 网格被定死在 1×N（每个字符单独一行）；
+        // window.resize 不会冒泡 details 列内部尺寸变化，所以单纯依赖 window.resize
+        // 无法在 details 列打开或拖拽 handle 改宽时重新 fit。
+        // ResizeObserver 在 observe 后异步触发，覆盖展开动画第一帧 / 拖拽 handle /
+        // 窗口 resize 全链路的容器尺寸变化，统一重新 fit。
+        var ro = new ResizeObserver(function () { try { fit.fit(); } catch (_) {} });
+        ro.observe(containerRef.current);
         termRef.current = term;
         fitRef.current = fit;
         var onResize = function () { try { fit.fit(); } catch (_) {} };
@@ -348,6 +356,7 @@ window.__ModuleLoader__.load({
           }).catch(function () {});
         });
         return function () {
+          ro.disconnect();
           window.removeEventListener("resize", onResize);
           try { term.dispose(); } catch (_) {}
           termRef.current = null;

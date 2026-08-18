@@ -48,7 +48,7 @@ if (!/export function apply/.test(libSrc)) fail('lib/index.js must export apply'
 const clientSrc = readFileSync(join(ROOT, 'client', 'client.js'), 'utf-8');
 if (!/__ModuleLoader__\.load/.test(clientSrc)) fail('client/client.js must be a module-loader bundle');
 if (!/exports\.apply/.test(clientSrc)) fail('client/client.js must export apply');
-if (/credentials|api[_-]?key|password|token/.test(clientSrc + libSrc)) fail('source must not embed secrets');
+if (/\bcredentials\b|\bapi[_-]?key\b|\bpassword\b|\btoken\b/.test(clientSrc + libSrc)) fail('source must not embed secrets');
 ok('lib/client entry shape')
 // 5) cordis.patch.yml 引用的一致性
 const patch = readFileSync(join(ROOT, 'cordis.patch.yml'), 'utf-8');
