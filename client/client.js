@@ -235,7 +235,8 @@ window.__ModuleLoader__.load({
       var useEffect = react.useEffect;
       var useRef = react.useRef;
       var useCallback = react.useCallback;
-      var statusSt = useState({ mine: null, loading: true });
+      // v0.4.16: 加 serverOk / forkOk 字段，状态区要显示 herdr 连接状态
+      var statusSt = useState({ mine: null, loading: true, serverOk: false, forkOk: false });
       var status = statusSt[0];
       var setStatus = statusSt[1];
       var themeSt = useState(readThemeColors());
@@ -245,7 +246,10 @@ window.__ModuleLoader__.load({
       var termRef = useRef(null);
       var fitRef = useRef(null);
 
-      // 拉 status 拿 mine.cwd / terminalPollMs
+      // v0.4.16: stateStartRef 跟踪 mcode 状态开始时间（stateSeq 变化时重置）
+      var stateStartRef = useRef({ seq: null, at: Date.now() });
+
+      // 拉 status 拿 mine.cwd / terminalPollMs / stateSeq（v0.4.16）
       useEffect(function () {
         var alive = true;
         function tick() {
@@ -254,9 +258,15 @@ window.__ModuleLoader__.load({
             .then(function (r) { return r.json(); })
             .then(function (body) {
               if (!alive) return;
-              setStatus({ mine: body.mine || null, loading: false });
+              var next = { mine: body.mine || null, loading: false, serverOk: !!body.serverOk, forkOk: !!body.forkOk };
+              // v0.4.16: 检测 stateSeq 变化 → 重置状态开始时间
+              var seq = next.mine && next.mine.stateSeq;
+              if (seq !== null && seq !== stateStartRef.current.seq) {
+                stateStartRef.current = { seq: seq, at: Date.now() };
+              }
+              setStatus(next);
             })
-            .catch(function () { if (alive) setStatus({ mine: null, loading: false }); });
+            .catch(function () { if (alive) setStatus({ mine: null, loading: false, serverOk: false, forkOk: false }); });
         }
         tick();
         return function () { alive = false; };
@@ -481,6 +491,76 @@ window.__ModuleLoader__.load({
 
       // v0.4.9：inputRow 和 keyRow 已删除（注释见上）
 
+      // v0.4.16：状态区——mcode pane info + 状态机 + 计时 + herdr 连接状态
+      // 复用 status fetch（每 2s）+ 状态开始时间记录
+      var renderStatusPanel = function () {
+        var mine = status.mine || null;
+        var stateLabel = (mine && mine.state) || "unknown";
+        var stateColor = stateLabel === "working" ? "#e3b341"
+          : stateLabel === "blocked" ? "#e5584b"
+          : stateLabel === "done" ? "#7ee787"
+          : "#9aa0a6";  // idle/unknown
+        // 状态已持续多久（v0.4.16）
+        var elapsedSec = Math.floor((Date.now() - stateStartRef.current.at) / 1000);
+        var elapsedStr = elapsedSec < 60 ? (elapsedSec + "s")
+          : Math.floor(elapsedSec / 60) + "m" + (elapsedSec % 60) + "s";
+
+        var paneInfo = mine ? [
+          ["pane", mine.pane || "—"],
+          ["viewport", (mine.viewportCols || "?") + "×" + (mine.viewportRows || "?")],
+          ["cwd", mine.cwd || "—"],
+          ["workspace", mine.workspace || "—"]
+        ] : [["pane", "—"], ["viewport", "—"], ["cwd", "—"], ["workspace", "—"]];
+
+        var connectionInfo = [
+          ["server", status.serverOk ? "ok" : "down"],
+          ["fork", status.forkOk ? "ok" : "no"],
+          ["owned", mine ? "yes" : "no"]
+        ];
+
+        function kv(label, value) {
+          return react.createElement("div", {
+            style: { display: "flex", gap: 6, fontFamily: "ui-monospace, Consolas, monospace" }
+          },
+            react.createElement("span", { style: { color: "#7f858c", minWidth: 64 } }, label),
+            react.createElement("span", { style: { color: "#e6edf3", wordBreak: "break-all", overflow: "hidden", textOverflow: "ellipsis" } }, value)
+          );
+        }
+
+        function group(title, rows) {
+          return react.createElement("div", { style: { marginBottom: 8 } },
+            react.createElement("div", { style: { color: "#9aa0a6", fontSize: 10, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 } }, title),
+            react.createElement("div", null, rows.map(function (r) { return kv(r[0], r[1]); }))
+          );
+        }
+
+        return react.createElement("div", {
+          "data-dsh-agent-dock": "status-panel",
+          style: {
+            flex: "0 0 auto",
+            padding: "8px 10px",
+            borderTop: "1px solid rgba(230, 237, 243, 0.12)",
+            background: "rgba(13, 17, 23, 0.7)",
+            color: "#e6edf3",
+            fontSize: 11,
+            fontFamily: "ui-monospace, Consolas, monospace",
+            overflowX: "auto"
+          }
+        },
+          // 状态机+计时
+          react.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8 } },
+            react.createElement("span", { style: {
+              display: "inline-block", width: 8, height: 8, borderRadius: "50%",
+              background: stateColor, boxShadow: "0 0 6px " + stateColor
+            } }),
+            react.createElement("span", { style: { fontWeight: 500 } }, stateLabel),
+            react.createElement("span", { style: { color: "#7f858c" } }, elapsedStr)
+          ),
+          group("mcode pane", paneInfo),
+          group("herdr", connectionInfo)
+        );
+      };
+
       var renderEmpty = function () {
         return react.createElement("div", {
           style: {
@@ -517,11 +597,11 @@ window.__ModuleLoader__.load({
       else if (xterm.error) body = renderError();
       else body = react.createElement("div", {
         ref: containerRef,
-        // v0.4.15: 加 overflow-x: auto — 配合 fontSize 8 让 94 cols 字符对齐显示；
-        // 万一 details column 宽度 < 94 字符宽度（451px），水平滚动条可滚动看完整内容
+        // v0.4.16: minHeight 216px (= mcode pane viewport_rows 27 × fontSize 8) — 保证 mcode
+        // 内容不被挤压变形。flex: "1 1 216px" 让 xterm 至少 216px + 按 details column 剩余空间增长。
         style: {
-          flex: 1, minHeight: 0, padding: "0 6px", background: "#0d1117",
-          overflowX: "auto"
+          flex: "1 1 216px", padding: "0 6px", background: "#0d1117",
+          overflowX: "auto", overflowY: "hidden", minHeight: 0
         }
       });
 
@@ -539,7 +619,7 @@ window.__ModuleLoader__.load({
           overflow: "hidden",
           position: "relative"  // v0.4.8: 给 floating × 按钮 absolute 定位用
         }
-      }, body, floatingClose);
+      }, body, renderStatusPanel(), floatingClose);
     }
 
     /**
