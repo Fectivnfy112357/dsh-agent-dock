@@ -500,10 +500,17 @@ window.__ModuleLoader__.load({
 
         function kv(label, value) {
           return react.createElement("div", {
-            style: { display: "flex", gap: 6, fontFamily: "ui-monospace, Consolas, monospace" }
+            style: { display: "flex", gap: 6, fontFamily: "ui-monospace, Consolas, monospace", alignItems: "baseline" }
           },
-            react.createElement("span", { style: { color: "#7f858c", minWidth: 64 } }, label),
-            react.createElement("span", { style: { color: "#e6edf3", wordBreak: "break-all", overflow: "hidden", textOverflow: "ellipsis" } }, value)
+            react.createElement("span", { style: { color: "#7f858c", minWidth: 64, flexShrink: 0 } }, label),
+            // v0.4.18: wordBreak 'break-all' → 'break-word' — 之前 break-all 在 details column
+            // 窄时把 'D:/programming/...' 这种长字符串每个字符一行竖向排列（用户截图）。
+            // break-word 只在空格/标点断行；overflowWrap anywhere 让超长无空格字符串
+            // 仍能换行（不溢出容器）；textOverflow ellipsis 末尾省略号。
+            react.createElement("span", { style: {
+              color: "#e6edf3", wordBreak: "break-word", overflowWrap: "anywhere",
+              overflow: "hidden", textOverflow: "ellipsis", minWidth: 0, flex: 1
+            } }, String(value))
           );
         }
 
