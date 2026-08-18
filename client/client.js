@@ -299,7 +299,9 @@ window.__ModuleLoader__.load({
           fetch("/agent-dock/terminal/text", {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ cwd: cwd, lines: 80, source: "recent", format: "ansi" })
+            // v0.4.19: lines 80 → 200 — mcode pane scrollback 累积超过 80 行会让早期内容
+            //（MCODE 顶部）丢失；增加到 200 容纳更多历史。xterm scrollback=4000 仍够。
+            body: JSON.stringify({ cwd: cwd, lines: 200, source: "recent", format: "ansi" })
           })
             .then(function (r) { return r.json(); })
             .then(function (body) {
