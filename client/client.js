@@ -244,7 +244,6 @@ window.__ModuleLoader__.load({
       var containerRef = useRef(null);
       var termRef = useRef(null);
       var fitRef = useRef(null);
-      var rowsRef = useRef(20);  // v0.4.10: xterm 显示行数跟随 mcode 内容行数（用 ref 避免 re-render 循环）
 
       // 拉 status 拿 mine.cwd / terminalPollMs
       useEffect(function () {
@@ -303,22 +302,8 @@ window.__ModuleLoader__.load({
                 termRef.current.reset();
                 termRef.current.write(body.text);
                 lastText = body.text;
-                // v0.4.10: 算 mcode 实际行数，term.resize 让 xterm 网格高度跟随内容
-                //（不再按 details column 高度算 rows 导致底部'假终端'空白）
-                var lineCount = body.text.split("\n").length;
-                var rowH = 14 * 1.15;  // fontSize × lineHeight
-                var maxRows = Math.max(5, Math.floor(window.innerHeight / rowH) - 2);
-                var newRows = Math.max(5, Math.min(maxRows, lineCount));
-                if (newRows !== rowsRef.current) {
-                  rowsRef.current = newRows;
-                  if (fitRef.current) {
-                    try {
-                      var dims = fitRef.current.proposeDimensions();
-                      if (dims) termRef.current.resize(dims.cols, newRows);
-                      else fitRef.current.fit();
-                    } catch (_) {}
-                  }
-                }
+                // v0.4.12: 删除 rowsRef 自适应逻辑（fit.fit() 在 ResizeObserver/window resize
+                // 已处理 cols+rows 同步；poll 只负责内容写入）
               }
             })
             .catch(function () { /* 静默：保留旧画面 */ })
@@ -395,34 +380,22 @@ window.__ModuleLoader__.load({
           fit = new mods.FitAddon();
           term.loadAddon(fit);
           term.open(containerRef.current);
-          // v0.4.10: 用 proposeDimensions 只算 cols，rows 由 mcode 内容动态决定
-          //（fit.fit() 会按容器高度算 rows，导致 rows >> 实际内容行数，底部大片假终端空白）
-          try {
-            var d = fit.proposeDimensions();
-            if (d) term.resize(d.cols, rowsRef.current);
-            else fit.fit();
-          } catch (_) {}
+          // v0.4.12: 恢复 fit.fit() —— xterm 网格 rows 按容器高度算，撑满整个 details column
+          //（用户期望终端面板是大屏幕，mcode 内容是屏幕里的内容；v0.4.11 root div 黑色
+          // 背景覆盖任何'假终端空白'边界，所以视觉上整个 details column 黑色连贯）
+          try { fit.fit(); } catch (_) {}
           // v0.4.3 修：DSH details column 展开动画第一帧 containerRef.current.clientWidth
           // ≈0，fitAddon 算出 cols=1 后 term 网格被定死在 1×N（每个字符单独一行）；
           // window.resize 不会冒泡 details 列内部尺寸变化，所以单纯依赖 window.resize
           // 无法在 details 列打开或拖拽 handle 改宽时重新 fit。
           // ResizeObserver 在 observe 后异步触发，覆盖展开动画第一帧 / 拖拽 handle /
           // 窗口 resize 全链路的容器尺寸变化，统一重新 fit。
-          ro = new ResizeObserver(function () {
-            try {
-              var d = fit.proposeDimensions();
-              if (d) term.resize(d.cols, rowsRef.current);
-            } catch (_) {}
-          });
+          // v0.4.12: 恢复 fit.fit()（按容器高度算 rows，撑满 details column）
+          ro = new ResizeObserver(function () { try { fit.fit(); } catch (_) {} });
           ro.observe(containerRef.current);
           termRef.current = term;
           fitRef.current = fit;
-          onResize = function () {
-            try {
-              var d = fit.proposeDimensions();
-              if (d) term.resize(d.cols, rowsRef.current);
-            } catch (_) {}
-          };
+          onResize = function () { try { fit.fit(); } catch (_) {} };
           window.addEventListener("resize", onResize);
           // 输入转发：term.onData → POST /terminal/send
           term.onData(function (data) {
@@ -514,11 +487,9 @@ window.__ModuleLoader__.load({
       else if (xterm.error) body = renderError();
       else body = react.createElement("div", {
         ref: containerRef,
-        // v0.4.10: flex 1→0 1 auto + alignSelf stretch + height auto —— xterm 网格高度
-        // 由 mcode 内容行数决定（term.resize 设），不再撑满整个 details column
+        // v0.4.12: 恢复 flex:1 + minHeight:0 —— xterm 网格按容器高度算 rows，撑满整个 details column
         style: {
-          flex: "0 1 auto", alignSelf: "stretch", height: "auto",
-          padding: "0 6px", background: "#0d1117"
+          flex: 1, minHeight: 0, padding: "0 6px", background: "#0d1117"
         }
       });
 
