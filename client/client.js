@@ -230,8 +230,6 @@ window.__ModuleLoader__.load({
       var closeDetails = props.closeDetails;
       var sessionCwd = useSessionCwd(sessionId);
       var cwd = sessionCwd;
-      // [DEBUG-a4f2] cwd 解析点：定位 cwd 是否为 null
-      try { console.log("[DEBUG-a4f2] TerminalPanelInner render", JSON.stringify({ sessionId: sessionId, passedCwd: props.cwd, sessionCwd: sessionCwd, cwd: cwd })); } catch (_) {}
       var xterm = useXterm();
       var useState = react.useState;
       var useEffect = react.useEffect;
@@ -251,8 +249,6 @@ window.__ModuleLoader__.load({
       useEffect(function () {
         var alive = true;
         function tick() {
-          // [DEBUG-a4f2] status fetch URL：cwd 是否为空决定服务端 expectCwd fallback 链
-          try { console.log("[DEBUG-a4f2] status fetch", cwd ? "with cwd=" + cwd : "without cwd (server will fallback to cfg.mcodeCwd/process.cwd)"); } catch (_) {}
           var url = "/agent-dock/status" + (cwd ? "?cwd=" + encodeURIComponent(cwd) : "");
           fetch(url, { cache: "no-store" })
             .then(function (r) { return r.json(); })
@@ -282,9 +278,7 @@ window.__ModuleLoader__.load({
 
       // 拉终端文本
       useEffect(function () {
-        // [DEBUG-a4f2] 轮询 useEffect 触发：看 xterm.ready / status.mine / cwd 三个条件哪个 false
-        try { console.log("[DEBUG-a4f2] poll useEffect run", JSON.stringify({ xtermReady: xterm.ready, hasMine: !!status.mine, mineState: status.mine && status.mine.state, minePane: status.mine && status.mine.pane, mineCwd: status.mine && status.mine.cwd, cwd: cwd, cfgPoll: cfgPoll })); } catch (_) {}
-        if (!xterm.ready || !status.mine || !cwd) { try { console.log("[DEBUG-a4f2] poll useEffect EARLY-RETURN"); } catch (_) {} return; }
+        if (!xterm.ready || !status.mine || !cwd) return;
         var alive = true;
         var timer = null;
         var pending = false;
@@ -300,8 +294,6 @@ window.__ModuleLoader__.load({
             .then(function (r) { return r.json(); })
             .then(function (body) {
               if (!alive) return;
-              // [DEBUG-a4f2] poll fetch 响应：看 body.ok / text 长度 / lastText 比较结果 / termRef 是否就绪
-              try { console.log("[DEBUG-a4f2] poll response", JSON.stringify({ ok: !!(body && body.ok), textType: body && typeof body.text, textLen: body && body.text && body.text.length, textHead: body && body.text && body.text.substring(0, 60), lastTextLen: lastText && lastText.length, textChanged: body && body.text !== lastText, termRefExists: !!termRef.current })); } catch (_) {}
               // v0.4.4 修：termRef 缺失时不缓存 lastText。xterm init 时机 bug（Fix 1 修）期间
               // termRef.current 可能是 null，若仍把 body.text 写进 lastText，等 termRef 就绪后
               // body.text === lastText → textChanged=false → 永远不再进入 write 分支。
@@ -322,10 +314,8 @@ window.__ModuleLoader__.load({
         return function () { alive = false; if (timer) clearTimeout(timer); };
       }, [xterm.ready, status.mine, cwd, cfgPoll]);
 
-      // 初始化 xterm（主题跟随 DSH）
+      // 初始化 xterm（v0.4.5 硬编码 GitHub Dark palette + 黑底，与 DSH 主题解耦）
       useEffect(function () {
-        // [DEBUG-a4f2] xterm init useEffect：触发时容器尺寸（fit 是否能算正确 cols）
-        try { console.log("[DEBUG-a4f2] xterm init useEffect", JSON.stringify({ xtermReady: xterm.ready, containerExists: !!containerRef.current, containerWidth: containerRef.current && containerRef.current.clientWidth, containerHeight: containerRef.current && containerRef.current.clientHeight })); } catch (_) {}
         if (!xterm.ready) return;
         // v0.4.4 修：xterm init 时机 bug。body 渲染为 containerRef div 的前提是
         // cwd && status.mine && xterm.ready 三个都为真，但 xterm.ready 异步加载通常比
@@ -350,12 +340,35 @@ window.__ModuleLoader__.load({
           term = new mods.Terminal({
             cursorBlink: true,
             fontFamily: 'ui-monospace, "Cascadia Code", Consolas, monospace',
-            fontSize: 13,
+            fontSize: 14,
+            fontWeight: 500,
+            fontWeightBold: 700,
+            lineHeight: 1.25,
+            // v0.4.5：硬编码终端深色风格（GitHub Dark palette），不再跟随 DSH 主题。
+            // 真正的终端就该永远黑底亮字——DSH 切浅/深主题时面板内部一致，
+            // mcode 自己输出的 ANSI 灰色 / 浅蓝 / 浅黄等在亮 1-2 阶的 palette 下更清晰。
             theme: {
-              background: theme.bg,
-              foreground: theme.fg,
-              cursor: theme.fg,
-              selectionBackground: theme.isDark ? "rgba(180,180,200,0.30)" : "rgba(40,60,140,0.25)"
+              background: "#0d1117",
+              foreground: "#e6edf3",
+              cursor: "#e6edf3",
+              cursorAccent: "#0d1117",
+              selectionBackground: "rgba(180,180,200,0.30)",
+              black: "#1f2328",
+              red: "#ff7b72",
+              green: "#7ee787",
+              yellow: "#e3b341",
+              blue: "#79c0ff",
+              magenta: "#d2a8ff",
+              cyan: "#56d4dd",
+              white: "#e6edf3",
+              brightBlack: "#8b949e",
+              brightRed: "#ffa198",
+              brightGreen: "#a5d6a7",
+              brightYellow: "#f0c674",
+              brightBlue: "#9ecbff",
+              brightMagenta: "#e0b8ff",
+              brightCyan: "#80deea",
+              brightWhite: "#f0f6fc"
             },
             convertEol: true,
             scrollback: 4000,
@@ -399,18 +412,8 @@ window.__ModuleLoader__.load({
         };
       }, [xterm.ready]);
 
-      // 主题切换时重新套用 xterm 主题（不重建 term，只更新 theme option）
-      useEffect(function () {
-        if (!termRef.current) return;
-        try {
-          termRef.current.options.theme = {
-            background: theme.bg,
-            foreground: theme.fg,
-            cursor: theme.fg,
-            selectionBackground: theme.isDark ? "rgba(180,180,200,0.30)" : "rgba(40,60,140,0.25)"
-          };
-        } catch (_) {}
-      }, [theme.bg, theme.fg, theme.isDark]);
+      // v0.4.5：xterm 主题已硬编码（GitHub Dark palette），不再跟随 DSH 主题动态更新——
+      // 终端面板内部保持永远黑底亮字，与 DSH 浅/深主题切换解耦。
 
       var sendText = useCallback(function (text) {
         if (!text || !cwd) return;
@@ -520,12 +523,14 @@ window.__ModuleLoader__.load({
         return react.createElement("button", {
           key: k,
           onClick: function () { sendKeys(k); },
+          // v0.4.5：键按钮对比度优化——padding 加大、字号 11→12、颜色 text-l2→text-l1、fontWeight 500
           style: {
-            padding: "2px 8px", borderRadius: 3,
+            padding: "3px 10px", borderRadius: 4,
             border: "1px solid var(--dsw-alias-border-l1, #3a3a40)",
-            background: "var(--dsw-alias-bg-base, #1c1c1f)",
-            color: "var(--dsw-alias-text-l2, #cfd2d6)",
-            cursor: "pointer", fontSize: 11, fontFamily: "ui-monospace, monospace"
+            background: "var(--dsw-alias-bg-elevated, #2a2a2e)",
+            color: "var(--dsw-alias-text-l1, #e6e6e6)",
+            cursor: "pointer", fontSize: 12, fontFamily: "ui-monospace, monospace",
+            fontWeight: 500
           }
         }, k);
       }));
@@ -566,9 +571,10 @@ window.__ModuleLoader__.load({
       else if (xterm.error) body = renderError();
       else body = react.createElement("div", {
         ref: containerRef,
+        // v0.4.5：硬编码深色背景（与 xterm theme.background 一致），加大 padding 让 xterm 内容不贴边
         style: {
-          flex: 1, minHeight: 0, padding: 6,
-          background: theme.bg
+          flex: 1, minHeight: 0, padding: "10px 10px",
+          background: "#0d1117"
         }
       });
 
