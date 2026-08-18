@@ -739,7 +739,7 @@ window.__ModuleLoader__.load({
               layoutStore: layout && layout.store ? layout.store : null
             };
           }
-        }, function (props) { return React.createElement(AgentDockWidget, { t: props.t, sessionId: props.sessionId, cwd: props.cwd, layout: props.layout, layoutStore: props.layoutStore }); });
+        }, function (props) { return react.createElement(AgentDockWidget, { t: props.t, sessionId: props.sessionId, cwd: props.cwd, layout: props.layout, layoutStore: props.layoutStore }); });
       });
       // 2) 终端面板：注册到 'details' slot（v0.4.0），priority -10 覆盖 ui-conversation
       // 默认注册的 DetailsPanel。DSH AppFrame 在右侧 detailsCol 内渲染此组件——
@@ -765,7 +765,7 @@ window.__ModuleLoader__.load({
               }
             };
           }
-        }, function (props) { return React.createElement(TerminalPanelForDetails, { t: props.t, sessionId: props.sessionId, closeDetails: props.closeDetails }); });
+        }, function (props) { return react.createElement(TerminalPanelForDetails, { t: props.t, sessionId: props.sessionId, closeDetails: props.closeDetails }); });
       });
     }
 
