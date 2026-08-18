@@ -433,45 +433,27 @@ window.__ModuleLoader__.load({
         }).catch(function () {});
       }, [cwd]);
 
-      var diagLine = (function () {
-        var parts = [];
-        parts.push("v0.4.0");
-        parts.push("cwd=" + (cwd || "null"));
-        if (status.mine) parts.push("mine=" + status.mine.state + "@" + status.mine.pane);
-        if (xterm.ready) parts.push("xterm=ok");
-        else if (xterm.error) parts.push("xterm=err");
-        return parts.join(" · ");
-      })();
-
-      var headerBar = react.createElement("div", {
-        "data-dsh-agent-dock": "panel-header",
+      // v0.4.8：删除整块 headerBar（标题 + 诊断行 + × 按钮），让黑色 xterm 顶到顶部。
+      // 用户反馈浅灰色 header 与黑色终端不协调，要求'上边这块浅灰色内容全部移除'。
+      // × 关闭功能改为 floating 按钮 absolute 定位到右上角，半透明深色背景融入终端风格；
+      // DSH details column 没有显式 × 关闭按钮（只有 drag handle），保留 floating × 避免用户只能拖拽关闭。
+      var floatingClose = (typeof closeDetails === "function") ? react.createElement("button", {
+        onClick: function () { closeDetails(); },
+        title: t("panelClose"),
+        "aria-label": t("panelClose"),
         style: {
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-          padding: "10px 12px",
-          color: "var(--dsw-alias-text-l1, #e6e6e6)",
-          fontSize: 13, fontWeight: 500,
-          borderBottom: "1px solid var(--dsw-alias-border-l1, #2a2a2e)",
-          background: "var(--dsw-alias-bg-elevated, transparent)",
-          flexShrink: 0
+          position: "absolute", top: 6, right: 6, zIndex: 10,
+          width: 22, height: 22,
+          background: "rgba(13, 17, 23, 0.65)",
+          border: "1px solid rgba(230, 237, 243, 0.25)",
+          borderRadius: 4,
+          color: "#e6edf3",
+          padding: 0, cursor: "pointer",
+          fontSize: 14, lineHeight: 1,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontFamily: "var(--dsw-alias-font-mono, ui-monospace, Consolas, monospace)"
         }
-      },
-        react.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 2, minWidth: 0 } },
-          react.createElement("strong", { style: { fontSize: 13 } }, t("panelTitle") + " · " + (status.mine && status.mine.cwd ? status.mine.cwd : (cwd || "—"))),
-          react.createElement("span", { style: { fontSize: 10, color: "var(--dsw-alias-text-l3, #7f858c)", wordBreak: "break-all" } }, diagLine)
-        ),
-        react.createElement("button", {
-          onClick: function () { if (typeof closeDetails === "function") closeDetails(); },
-          title: t("panelClose"),
-          "aria-label": t("panelClose"),
-          style: {
-            background: "transparent",
-            border: "1px solid var(--dsw-alias-border-l1, #3a3a40)",
-            borderRadius: 4,
-            color: "var(--dsw-alias-text-l2, #cfd2d6)",
-            padding: "2px 8px", cursor: "pointer", fontSize: 14, lineHeight: 1
-          }
-        }, "×")
-      );
+      }, "×") : null;
 
       var inputRow = react.createElement("div", {
         style: {
@@ -587,9 +569,10 @@ window.__ModuleLoader__.load({
           color: "var(--dsw-alias-text-l1, #e6e6e6)",
           fontFamily: "var(--dsw-alias-font-mono, ui-monospace, Consolas, monospace)",
           boxSizing: "border-box",
-          overflow: "hidden"
+          overflow: "hidden",
+          position: "relative"  // v0.4.8: 给 floating × 按钮 absolute 定位用
         }
-      }, headerBar, body, inputRow, keyRow);
+      }, body, inputRow, keyRow, floatingClose);
     }
 
     /**
