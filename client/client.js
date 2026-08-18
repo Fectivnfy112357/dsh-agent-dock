@@ -416,22 +416,10 @@ window.__ModuleLoader__.load({
       // v0.4.5：xterm 主题已硬编码（GitHub Dark palette），不再跟随 DSH 主题动态更新——
       // 终端面板内部保持永远黑底亮字，与 DSH 浅/深主题切换解耦。
 
-      var sendText = useCallback(function (text) {
-        if (!text || !cwd) return;
-        fetch("/agent-dock/terminal/send", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ cwd: cwd, text: text })
-        }).catch(function () {});
-      }, [cwd]);
-      var sendKeys = useCallback(function (keys) {
-        if (!keys || !cwd) return;
-        fetch("/agent-dock/terminal/send", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ cwd: cwd, keys: Array.isArray(keys) ? keys : [keys] })
-        }).catch(function () {});
-      }, [cwd]);
+      // v0.4.9：删除 sendText / sendKeys / inputRow / keyRow。用户要求'底部的 bar 也全部去掉'——
+      // mcode TUI 自带 `>` prompt + 键盘输入，插件的输入栏 + 键按钮是冗余 UI；
+      // 整个 details column 现在只剩 xterm 容器 + 右上角 floating ×。
+      // xterm 自身通过 term.onData 把按键转发到 mcode（init useEffect 内已有），用户键入直接进 mcode。
 
       // v0.4.8：删除整块 headerBar（标题 + 诊断行 + × 按钮），让黑色 xterm 顶到顶部。
       // 用户反馈浅灰色 header 与黑色终端不协调，要求'上边这块浅灰色内容全部移除'。
@@ -455,68 +443,7 @@ window.__ModuleLoader__.load({
         }
       }, "×") : null;
 
-      var inputRow = react.createElement("div", {
-        style: {
-          display: "flex", gap: 6, padding: 8,
-          borderTop: "1px solid var(--dsw-alias-border-l1, #2a2a2e)",
-          background: "var(--dsw-alias-bg-elevated, transparent)",
-          flexShrink: 0
-        }
-      },
-        react.createElement("input", {
-          placeholder: t("panelCmdPlaceholder"),
-          style: {
-            flex: 1, padding: "5px 10px",
-            border: "1px solid var(--dsw-alias-border-l1, #3a3a40)",
-            borderRadius: 4,
-            background: "var(--dsw-alias-bg-base, #1c1c1f)",
-            color: "var(--dsw-alias-text-l1, #e6e6e6)",
-            fontSize: 12, fontFamily: "ui-monospace, Consolas, monospace"
-          },
-          onKeyDown: function (e) {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              var v = e.currentTarget.value;
-              sendText(v + "\n");
-              e.currentTarget.value = "";
-            }
-          }
-        }),
-        react.createElement("button", {
-          onClick: function () {
-            var inp = document.getElementById("agent-dock-panel-input");
-            if (inp && inp.value) { sendText(inp.value + "\n"); inp.value = ""; }
-          },
-          style: {
-            padding: "5px 12px", borderRadius: 4,
-            border: "1px solid var(--dsw-alias-border-l1, #3a3a40)",
-            background: "var(--dsw-alias-button-secondary-fill, #2a2a2e)",
-            color: "var(--dsw-alias-text-l1, #e6e6e6)",
-            cursor: "pointer", fontSize: 12
-          }
-        }, t("panelSend"))
-      );
-
-      var keyRow = react.createElement("div", {
-        style: {
-          display: "flex", gap: 4, padding: "0 8px 8px",
-          flexWrap: "wrap", flexShrink: 0
-        }
-      }, ["esc", "enter", "tab", "shift+tab", "ctrl+c", "ctrl+l", "up", "down"].map(function (k) {
-        return react.createElement("button", {
-          key: k,
-          onClick: function () { sendKeys(k); },
-          // v0.4.5：键按钮对比度优化——padding 加大、字号 11→12、颜色 text-l2→text-l1、fontWeight 500
-          style: {
-            padding: "3px 10px", borderRadius: 4,
-            border: "1px solid var(--dsw-alias-border-l1, #3a3a40)",
-            background: "var(--dsw-alias-bg-elevated, #2a2a2e)",
-            color: "var(--dsw-alias-text-l1, #e6e6e6)",
-            cursor: "pointer", fontSize: 12, fontFamily: "ui-monospace, monospace",
-            fontWeight: 500
-          }
-        }, k);
-      }));
+      // v0.4.9：inputRow 和 keyRow 已删除（注释见上）
 
       var renderEmpty = function () {
         return react.createElement("div", {
@@ -572,7 +499,7 @@ window.__ModuleLoader__.load({
           overflow: "hidden",
           position: "relative"  // v0.4.8: 给 floating × 按钮 absolute 定位用
         }
-      }, body, inputRow, keyRow, floatingClose);
+      }, body, floatingClose);
     }
 
     /**
