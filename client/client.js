@@ -527,6 +527,9 @@ window.__ModuleLoader__.load({
         style: {
           display: "flex", flexDirection: "column",
           width: "100%", height: "100%",
+          // v0.4.11: 加 background:#0d1117 覆盖 details column 浅色主题背景
+          //（v0.4.10 xterm container 收缩后 details column 自身浅色背景暴露）
+          background: "#0d1117",
           color: "var(--dsw-alias-text-l1, #e6e6e6)",
           fontFamily: "var(--dsw-alias-font-mono, ui-monospace, Consolas, monospace)",
           boxSizing: "border-box",
