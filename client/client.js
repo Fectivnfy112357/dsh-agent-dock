@@ -343,7 +343,8 @@ window.__ModuleLoader__.load({
             fontSize: 14,
             fontWeight: 500,
             fontWeightBold: 700,
-            lineHeight: 1.25,
+            // v0.4.6：lineHeight 1.25→1.15 减少底部留白（与 padding 一起调整）
+            lineHeight: 1.15,
             // v0.4.5：硬编码终端深色风格（GitHub Dark palette），不再跟随 DSH 主题。
             // 真正的终端就该永远黑底亮字——DSH 切浅/深主题时面板内部一致，
             // mcode 自己输出的 ANSI 灰色 / 浅蓝 / 浅黄等在亮 1-2 阶的 palette 下更清晰。
@@ -571,9 +572,9 @@ window.__ModuleLoader__.load({
       else if (xterm.error) body = renderError();
       else body = react.createElement("div", {
         ref: containerRef,
-        // v0.4.5：硬编码深色背景（与 xterm theme.background 一致），加大 padding 让 xterm 内容不贴边
+        // v0.4.6：padding 10→4 减少上下留白；保持左右 10px 让 xterm 内容不贴左右边
         style: {
-          flex: 1, minHeight: 0, padding: "10px 10px",
+          flex: 1, minHeight: 0, padding: "4px 10px",
           background: "#0d1117"
         }
       });
