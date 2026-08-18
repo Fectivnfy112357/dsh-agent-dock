@@ -572,9 +572,9 @@ window.__ModuleLoader__.load({
       else if (xterm.error) body = renderError();
       else body = react.createElement("div", {
         ref: containerRef,
-        // v0.4.6：padding 10→4 减少上下留白；保持左右 10px 让 xterm 内容不贴左右边
+        // v0.4.7：上下 padding 完全移除（用户要求不留白）；左右 6px 避免内容贴 DSH border 太死
         style: {
-          flex: 1, minHeight: 0, padding: "4px 10px",
+          flex: 1, minHeight: 0, padding: "0 6px",
           background: "#0d1117"
         }
       });
