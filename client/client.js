@@ -342,11 +342,18 @@ window.__ModuleLoader__.load({
           term = new mods.Terminal({
             cursorBlink: true,
             fontFamily: 'ui-monospace, "Cascadia Code", Consolas, monospace',
-            fontSize: 14,
-            fontWeight: 500,
+            // v0.4.15：fontSize 14→8 + lineHeight 1.15→1.0
+            // 根因：mcode pane viewport_cols = 94（herdr workspace 宽度），xterm.js
+            // 字符宽度最小值 ≈ fontSize × 0.6。fontSize 14 → chars.width ≈ 8.4px，
+            // 94 × 8.4 = 790px 远超 details column ~370px，xterm 不会强制缩小字符，
+            // 多余空间留空（用户截图的'左侧稀疏+右侧大片空白'）。
+            // fontSize 8 → chars.width ≈ 4.8px，94 × 4.8 = 451px 接近 details column，
+            // 字符小但 94 cols 完整对齐显示。配合 overflow-x: auto 万一仍稍大
+            // 也能水平滚动看完整内容。
+            fontSize: 8,
+            fontWeight: 400,
             fontWeightBold: 700,
-            // v0.4.6：lineHeight 1.25→1.15 减少底部留白（与 padding 一起调整）
-            lineHeight: 1.15,
+            lineHeight: 1.0,
             // v0.4.5：硬编码终端深色风格（GitHub Dark palette），不再跟随 DSH 主题。
             // 真正的终端就该永远黑底亮字——DSH 切浅/深主题时面板内部一致，
             // mcode 自己输出的 ANSI 灰色 / 浅蓝 / 浅黄等在亮 1-2 阶的 palette 下更清晰。
@@ -510,9 +517,11 @@ window.__ModuleLoader__.load({
       else if (xterm.error) body = renderError();
       else body = react.createElement("div", {
         ref: containerRef,
-        // v0.4.12: 恢复 flex:1 + minHeight:0 —— xterm 网格按容器高度算 rows，撑满整个 details column
+        // v0.4.15: 加 overflow-x: auto — 配合 fontSize 8 让 94 cols 字符对齐显示；
+        // 万一 details column 宽度 < 94 字符宽度（451px），水平滚动条可滚动看完整内容
         style: {
-          flex: 1, minHeight: 0, padding: "0 6px", background: "#0d1117"
+          flex: 1, minHeight: 0, padding: "0 6px", background: "#0d1117",
+          overflowX: "auto"
         }
       });
 
